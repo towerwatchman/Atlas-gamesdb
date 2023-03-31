@@ -152,3 +152,16 @@ def UpdateRemoteF95Table(f95_id, short_name, other, engine, banner_url, title, s
     mycursor.execute(sql,parameters)
     mydb.commit()
     mydb.close()
+
+def GetLastDbUpdate():
+    mydb = mysql.connector.connect(
+        user='u902432006_dbreader', 
+        password='1Z#y!*Ki+',
+        host='hydrus95.com',
+        database='u902432006_vndb'
+    )
+    
+    sql = "SELECT MAX(last_db_update) FROM f95zone_data"
+    mycursor = mydb.cursor()
+    mycursor.execute(sql)
+    return (mycursor.fetchone())[0]
