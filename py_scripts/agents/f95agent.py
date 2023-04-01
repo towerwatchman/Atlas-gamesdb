@@ -38,7 +38,7 @@ class f95:
             )
         
         #Get total page count and ittereate through them
-        for item in range(1 , self.getThreadPageCount()):
+        for item in range(120 , self.getThreadPageCount()):
             #Page manipulation            
             print("---- Starting Page:",str(item),"----")
             if(item > 1):  
@@ -67,10 +67,10 @@ class f95:
                         #last_thread_update = datetime.strptime(Titem['last_thread_update'].replace("T"," ")[:-5], '%Y-%m-%d %H:%M:%S')
                         #print(last_thread_update ,">", last_db_update)
                         #if last_thread_update >last_db_update:
-                        #print(Titem)
+                        print(Titem)
                         
                 #print(Titem.keys())
-                time.sleep(1)   
+                time.sleep(2)   
                 #break;
             else:
                 print("error")
