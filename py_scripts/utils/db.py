@@ -21,7 +21,7 @@ def CreateLocalDatabase():
                 CREATE TABLE f95zone_data (
                     f95_id TEXT NOT NULL UNIQUE PRIMARY KEY,
                     short_name TEXT NOT NULL,
-                    other TEXT,
+                    category TEXT,
                     engine TEXT,
                     banner_url TEXT,
                     title TEXT NOT NULL,
@@ -30,8 +30,8 @@ def CreateLocalDatabase():
                     developer TEXT,
                     site_url TEXT,
                     overview TEXT,
-                    thread_update DATE,
-                    release_date DATE,
+                    last_thread_update DATE,
+                    last_release DATE,
                     censored TEXT,
                     language TEXT,
                     translations TEXT,
@@ -42,28 +42,34 @@ def CreateLocalDatabase():
                     os TEXT,
                     views TEXT,
                     likes TEXT,
+                    replies TEXT,
                     tags TEXT,
                     rating TEXT,
-                    screens TEXT,
-                    last_update TEXT
+                    preview_urls TEXT,
+                    last_record_update TEXT,
+                    thread_publish_date TEXT,
+                    last_thread_comment TEXT
                 );
             """)
     else:
         print("Database Exist")
 
-def UpdateLocalF95Table(f95_id, short_name, other, engine, banner_url, title, status, version, developer,
-    site_url, overview, thread_update, release_date, censored, language, translations,
-    length, vndb, genre, voice, os, views, likes, tags, rating, screens, last_update):
+def UpdateLocalF95Table(f95_id, short_name, category, engine, banner_url, title, status, version,
+    developer,site_url, overview, last_thread_update, last_release, censored, language, translations,
+    length, vndb, genre, voice, os, views, likes, tags, rating, preview_urls, last_record_update,
+    thread_publish_date,last_thread_comment):
     con = sl.connect(dbName)
     cursor = con.cursor()
     sql = """INSERT OR REPLACE INTO f95zone_data
-    (f95_id, short_name, other, engine, banner_url, title, status, version, developer,
-    site_url, overview, thread_update, release_date, censored, language, translations,
-    length, vndb, genre, voice, os, views, likes, tags, rating, screens, last_update)
+    (f95_id, short_name, category, engine, banner_url, title, status, version,
+    developer,site_url, overview, last_thread_update, last_release, censored, language, translations,
+    length, vndb, genre, voice, os, views, likes, tags, rating, preview_urls, last_record_update,
+    thread_publish_date,last_thread_comment)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);"""
-    parameters = (f95_id, short_name, other, engine, banner_url, title, status, version, developer,
-    site_url, overview, thread_update, release_date, censored, language, translations,
-    length, vndb, genre, voice, os, views, likes, tags, rating, screens, last_update)
+    parameters = (f95_id, short_name, category, engine, banner_url, title, status, version,
+    developer,site_url, overview, last_thread_update, last_release, censored, language, translations,
+    length, vndb, genre, voice, os, views, likes, tags, rating, preview_urls, last_record_update,
+    thread_publish_date,last_thread_comment)
     cursor.execute(sql,parameters)
     con.commit()
     cursor.close()
@@ -165,3 +171,18 @@ def GetLastDbUpdate():
     mycursor = mydb.cursor()
     mycursor.execute(sql)
     return (mycursor.fetchone())[0]
+
+#-- Dynamic Insert --
+
+def UpdatetableDynamic(table, values, local):
+    if local == True:
+        con = sl.connect(dbName)      
+        cursor = con.cursor()
+
+    columns = ', '.join(values.keys())
+    placeholders = ', '.join('?' * len(values))
+    sql = 'INSERT OR REPLACE INTO ' + table + ' ({}) VALUES ({})'.format(columns, placeholders)
+    values = [int(x) if isinstance(x, bool) else x for x in values.values()]
+    cursor.execute(sql, values)
+    con.commit()
+    cursor.close()
