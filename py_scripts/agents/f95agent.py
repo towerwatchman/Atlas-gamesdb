@@ -38,7 +38,7 @@ class f95:
             )
         
         #Get total page count and ittereate through them
-        for item in range(120 , self.getThreadPageCount()):
+        for item in range(1 , self.getThreadPageCount() +1):
             #Page manipulation            
             print("---- Starting Page:",str(item),"----")
             if(item > 1):  
