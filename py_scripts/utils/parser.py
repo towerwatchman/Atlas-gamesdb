@@ -48,7 +48,6 @@ class parser:
 
         return Titem
     
-    #returns "" if arry is 0
     def ParseDateTimeItem(item):
         if len(item) <= 0:
             return ""

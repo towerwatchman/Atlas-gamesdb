@@ -10,7 +10,7 @@ $title = "";
 $version = "";
 $developer = "";
 $status = 200;
-$last_db_update = "null";
+$last_record_update = "null";
 $games = "null";
 $game_count ="null";
 //Read in responses if available.
@@ -49,9 +49,9 @@ else{
 
         $query = mysqli_query($conn, $base);
         $query1 = mysqli_query($conn, "SELECT COUNT(title) FROM f95zone_data AS total");
-        $query2 = mysqli_query($conn, "SELECT MAX(last_db_update) FROM f95zone_data");
+        $query2 = mysqli_query($conn, "SELECT MAX(last_record_update) FROM f95zone_data");
         $game_count = mysqli_fetch_row($query1)[0];
-        $last_db_update = mysqli_fetch_row($query2)[0];
+        $last_record_update = mysqli_fetch_row($query2)[0];
         $rows = array();
         while($r = mysqli_fetch_assoc($query)) {
             $rows[] = array("f95_id"=>$r['f95_id'],
@@ -77,11 +77,13 @@ else{
                             "os"=>explode(",",$r['os']),
                             "views"=>$r['views'],
                             "likes"=>$r['likes'],
+                            "replies"=>$r['replies'],                            
                             "tags"=>explode(",",$r['tags']),
                             "rating"=>$r['rating'],
                             "preview_urls"=>explode(",",$r['preview_urls']),
-                            "last_db_update"=>$r['last_db_update'],
-                            "thread_publish_date"=>$r['thread_publish_date']);           
+                            "last_record_update"=>$r['last_record_update'],
+                            "thread_publish_date"=>$r['thread_publish_date'],
+                            "last_thread_comment"=>$r['last_thread_comment']);           
         }
         $status = 200;
         $games = json_encode($rows);
@@ -89,7 +91,7 @@ else{
     }   
 }
 //output JSON
-$result = "{\"games\":" . $games . ",\"status\":" . $status.",\"total_games\":".$game_count.",\"last_db_update\":\"".$last_db_update."\"}";
+$result = "{\"games\":" . $games . ",\"status\":" . $status.",\"total_games\":".$game_count.",\"last_record_update\":\"".$last_record_update."\"}";
 print($result);
 
 //TODO:
