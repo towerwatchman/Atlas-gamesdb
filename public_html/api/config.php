@@ -1,6 +1,7 @@
 <?php
-    $servername = "hydrus95.com";
-    $database = "u902432006_vndb";
+    /*$servername = "hydrus95.com";*/
+    $servername = "localhost";
+    $database = "u902432006_games";
     $username = "u902432006_dbreader";
-    $password = "1Z#y!*Ki+";
+    $password = "P?#@;k|Y4";
 ?>

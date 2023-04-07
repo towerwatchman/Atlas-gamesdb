@@ -10,9 +10,9 @@ $title = "";
 $version = "";
 $developer = "";
 $status = 200;
-$last_record_update = "null";
-$games = "null";
-$game_count ="null";
+$last_record_update = NULL;
+$games = NULL;
+$game_count = NULL;
 //Read in responses if available.
 if(isset( $_GET["id"])){$id = "f95_id=".trim($_GET["id"]);}
 if(isset( $_GET["title"])){$title = "title=".trim($_GET["title"]);}
