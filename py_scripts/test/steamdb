@@ -1,0 +1,36 @@
+import requests
+from urllib.request import urlopen
+from bs4 import BeautifulSoup
+from datetime import datetime
+import re
+import time
+
+url = 'https://f95zone.to/threads/fuck-nights-at-fremys-v0-1-0-back-door-studio.158009/'
+headers = {
+    "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+    "accept-encoding": "gzip, deflate, br",
+    "accept-language": "en-US,en;q=0.9",
+    "cache-control": "max-age=0",
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": "\"Windows\"",
+    "sec-fetch-dest": "document",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-site": "none",
+    "sec-fetch-user": "?1",
+    "upgrade-insecure-requests": "1",
+    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36",
+}
+result = requests.get(url, headers=headers)
+print(result.text)
+print(result.status_code)
+
+
+http: // api.steampowered.com/ISteamApps/GetAppList/v0002 /?key = STEAMKEY & format = json
+
+http: // store.steampowered.com/api/appdetails?appids = {1774580}?key = BAB6FF7DB2886C6E3772BF9CD056460B
+
+https: // store.steampowered.com/api/appdetails?appids = 1774580
+https: // cdn.cloudflare.steamstatic.com/steam/apps/1774580/header.jpg
+https: // cdn.cloudflare.steamstatic.com/steam/apps/1774580/library_600x900.jpg
+https: // cdn.cloudflare.steamstatic.com/steam/apps/1774580/library_hero.jpg
+https: // cdn.cloudflare.steamstatic.com/steam/apps/1774580/logo.png
