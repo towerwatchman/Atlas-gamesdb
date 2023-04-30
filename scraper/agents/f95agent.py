@@ -75,3 +75,28 @@ class f95:
             else:
                 print("error")
 
+    def downloadLatest(self, type):
+        print(type)
+        #get total pages
+        #get id list
+
+    def getLatestUpdateIds():         
+        alpha_url = "https://f95zone.to/sam/latest_alpha/"
+        page = requests.get(alpha_url)
+        print(page)
+        if(page.status_code == 200):   
+            html = BeautifulSoup(page.content, "html.parser")
+            print(html)
+           # elements = html.find_all("script")
+
+            #print(elements)
+            #for element in elements:
+            #    print(element)
+        
+
+
+    #https://f95zone.to/sam/latest_alpha/
+    #<script>
+			#var latestUpdates
+
+         
