@@ -113,10 +113,10 @@ for steam_id in steam_dict:
     
     #Adding Exe
     print(str(datetime.now()) +  ": Adding Blank Exe")
-    shutil.copyfile(os.path.join(os.getcwd(), "scraper/test/blank.exe"), os.path.join(p_version, "blank.exe"))
+    shutil.copyfile(os.path.join(os.getcwd(), "blank.exe"), os.path.join(p_version, "blank.exe"))
 
     #Create folders based on engine
-    engine_dir = os.path.join(os.getcwd(),"scraper/engines")
+    engine_dir = os.path.join(os.getcwd(),"engines")
     for engine in os.listdir(engine_dir):
         engine_name = engine.replace("Engine.", "").replace(".txt","")
         if(engine_name == str(steam_id[1])):
