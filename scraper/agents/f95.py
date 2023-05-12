@@ -1,9 +1,9 @@
 import requests
 from urllib.request import urlopen
 from bs4 import BeautifulSoup
-from utils.parser import *
 from datetime import datetime
-from utils.db import *
+from scraper.utils.parser import *
+from scraper.utils.db import *
 
 # import re
 import time

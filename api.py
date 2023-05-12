@@ -1,5 +1,6 @@
-from agents.f95 import *
-from utils.db import *
+from scraper.agents.f95 import *
+from scraper.utils.db import *
+from scraper.types.eTypes import *
 
 # from types.dTypes import *
 
@@ -13,8 +14,8 @@ from utils.db import *
 # f95.getLatestUpdateIds();
 
 # Create Remote Database for Atlas
-# CreateRemoteDatabase();
+# CreateRemoteDatabase()
 # DeleteLocalDatabase()
-CreateLocalDatabase()
+CreateDatabase(database.LOCAL)
 
-f95.downloadThreadInfo(f95, "new", False, 1)
+# f95.downloadThreadInfo(f95, "new", False, 1)

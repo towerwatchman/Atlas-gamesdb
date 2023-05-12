@@ -1,6 +1,6 @@
 import collections
 import re
-from datatypes.data import *
+from scraper.datatypes.data import *
 
 
 class parser:

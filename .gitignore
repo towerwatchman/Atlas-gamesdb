@@ -3,3 +3,4 @@ data.db
 config.php
 dbCredentials.py
 __pycache__/
+.db
