@@ -5,13 +5,13 @@ class query:
     def __init__(self) -> None:
         pass
 
-    def atlasTable(type):
+    def createAtlasTable(type):
         us = ""
         if type == database.REMOTE:
             us = "_"
         query = (
             """
-                CREATE TABLE atlas (
+                CREATE TABLE IF NOT EXISTS atlas (
                     id INTEGER PRIMARY KEY AUTO"""
             + us
             + """INCREMENT,
@@ -44,9 +44,9 @@ class query:
         )
         return query
 
-    def f95Table(type):
+    def createF95Table(type):
         query = """
-                CREATE TABLE f95_zone_data (
+                CREATE TABLE IF NOT EXISTS f95_zone_data (
                     f95_id INT NOT NULL UNIQUE PRIMARY KEY,
                     id INT NOT NULL,
                     banner_url LONGTEXT, 
@@ -63,9 +63,13 @@ class query:
 
     def testTable():
         query = """
-                CREATE TABLE test (
+                CREATE TABLE IF NOT EXISTS test (
                     id INT NOT NULL UNIQUE PRIMARY KEY,
                     name TINYTEXT
                 );
             """
+        return query
+
+    def deleteTable(table):
+        query = "DROP TABLE IF EXISTS `" + table + "`;"
         return query

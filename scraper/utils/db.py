@@ -17,17 +17,6 @@ def DeleteLocalDatabase():
         os.remove(dbName)
 
 
-def CreateLocalDatabase():
-    if Path((dbName)).is_file() == False:
-        print("Creating Database")
-        con = sl.connect(dbName)
-        # with con:
-        #    con.execute(atlasTable(database.LOCAL))
-        #    con.execute(f95Table())
-    else:
-        print("Database Exist")
-
-
 def TruncateLocalF95Table():
     con = sl.connect(dbName)
     cursor = con.cursor()
@@ -35,25 +24,6 @@ def TruncateLocalF95Table():
     cursor.execute(sql)
     con.commit()
     cursor.close()
-
-
-# REMOTE DB MANIPULATION
-
-
-def CreateRemoteDatabase():
-    cnx = mysql.connector.connect(
-        user="u902432006_dbreader",
-        password="1Z#y!*Ki+",
-        host="atlas-gamesdb.com",
-        database="u902432006_games",
-    )
-
-    print("Creating Remote Database")
-    con = cnx.cursor()
-    # with con:
-    #    con.execute(atlasTable())
-    #    con.execute(f95Table())
-    cnx.close()
 
 
 # -- Dynamic Functions --
@@ -82,23 +52,57 @@ def CreateDatabase(type):
     if type == database.LOCAL:
         if Path((dbName)).is_file() == False:
             print("Creating Local Database")
-            con = sl.connect(dbName)
-            with con:
-                con.execute(query.atlasTable(database.LOCAL))
-                con.execute(query.f95Table(database.LOCAL))
         else:
             print("Local Database Exist")
+        con = sl.connect(dbName)
+        with con:
+            con.execute(query.createAtlasTable(database.LOCAL))
+            con.execute(query.createF95Table(database.LOCAL))
     # Remote
     elif type == database.REMOTE:
         cnx = mysql.connector.connect(
-            user=config.user_readdonly,
-            password=config.password_readonly,
-            host=config.host,
-            database=config.database,
+            user=config.user_readdonly(),
+            password=config.password_readonly(),
+            host=config.host(),
+            database=config.database(),
         )
         print("Creating Remote Database")
         con = cnx.cursor()
         with con:
-            con.execute(query.atlasTable(database.REMOTE))
-            con.execute(query.f95Table(database.REMOTE))
+            con.execute(query.createAtlasTable(database.REMOTE))
+            con.execute(query.createF95Table(database.REMOTE))
         cnx.close()
+
+
+def DeleteTables(type):
+    # Local
+    if type == database.LOCAL:
+        if Path((dbName)).is_file() == True:
+            print("Deleting Local Tables")
+            con = sl.connect(dbName)
+            with con:
+                con.execute(query.deleteTable("atlas"))
+                con.execute(query.deleteTable("test"))
+                con.execute(query.deleteTable("f95_zone_data"))
+    if type == database.REMOTE:
+        cnx = mysql.connector.connect(
+            user=config.user_readdonly(),
+            password=config.password_readonly(),
+            host=config.host(),
+            database=config.database(),
+        )
+        print("Deleting Remote Tables")
+        con = cnx.cursor()
+        with con:
+            con.execute(query.deleteTable("atlas"))
+            con.execute(query.deleteTable("test"))
+            con.execute(query.deleteTable("f95_zone_data"))
+        cnx.close()
+
+
+def DeleteDatabase(type):
+    # Local
+    if type == database.LOCAL:
+        if Path((dbName)).is_file() == True:
+            print("Deleting Local Database")
+            os.remove(dbName)

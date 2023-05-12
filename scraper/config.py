@@ -3,13 +3,17 @@ class config:
         pass
 
     def user_readdonly():
-        return "u902432006_dbreader"
+        user = "u902432006_dbreader"
+        return user
 
     def password_readonly():
-        return "1Z#y!*Ki+"
+        password = "1Z#y!*Ki+"
+        return password
 
     def host():
-        return "atlas-gamesdb.com"
+        host = "atlas-gamesdb.com"
+        return host
 
     def database():
-        return "u902432006_games"
+        database = "u902432006_games"
+        return database
