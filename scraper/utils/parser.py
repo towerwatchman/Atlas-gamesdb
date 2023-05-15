@@ -64,6 +64,7 @@ class parser:
                     "[\W_]+", "", Titem["title"].strip().replace(" ", "")
                 ).upper()
 
+            Titem["id_name"] = Titem["short_name"] + "_" + Titem["creator"].upper()
         return Titem
 
     def ParseDateTimeItem(item):

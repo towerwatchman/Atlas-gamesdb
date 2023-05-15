@@ -9,7 +9,7 @@ from scraper.types.eTypes import *
 
 # Create Remote Database for Atlas
 CreateDatabase(database.REMOTE)
-f95.downloadThreadInfo(f95, "new", False, 1)
+f95.downloadThreadInfo(f95, "new", False, 1, database.REMOTE)
 # CreateRemoteDatabase()
 #  DeleteLocalDatabase()
 # CreateDatabase(database.LOCAL)

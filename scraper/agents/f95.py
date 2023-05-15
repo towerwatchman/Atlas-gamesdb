@@ -30,7 +30,7 @@ class f95:
         else:
             return 0
 
-    def downloadThreadInfo(self, type, include_game_info, last_db_update):
+    def downloadThreadInfo(self, type, include_game_info, last_db_update, db_type):
         pages = self.getThreadPageCount()
         print(
             "Staring download from F95",
@@ -46,7 +46,7 @@ class f95:
         )
 
         # Get total page count and ittereate through them
-        for item in range(1, 2):  # self.getThreadPageCount() + 1):
+        for item in range(1, self.getThreadPageCount() + 1):
             # Page manipulation
             print("---- Starting Page:", str(item), "----")
             if item > 1:
@@ -80,15 +80,17 @@ class f95:
                     Titem["replies"] = parser.ParseReplies(element)
                     Titem["views"] = parser.ParseViews(element)
                     Titem["rating"] = parser.ParseRating(element)
-                    # print(Titem['category'])
+                    # Assign name  + engine for each item
+
+                    print(Titem["title"])
                     if Titem["category"] != "README":
                         UpdatetableDynamic(
-                            "f95zone_data", self.getDataForAtlas(Titem), True
+                            "atlas", self.updateAtlasTable(Titem), db_type
                         )
-                        # last_thread_update = datetime.strptime(Titem['last_thread_update'].replace("T"," ")[:-5], '%Y-%m-%d %H:%M:%S')
-                        # print(last_thread_update ,">", last_db_update)
-                        # if last_thread_update >last_db_update:
-                        print(Titem)
+                    # last_thread_update = datetime.strptime(Titem['last_thread_update'].replace("T"," ")[:-5], '%Y-%m-%d %H:%M:%S')
+                    # print(last_thread_update ,">", last_db_update)
+                    # if last_thread_update >last_db_update:
+                    # print(Titem)
 
                 # print(Titem.keys())
                 time.sleep(2)
@@ -118,7 +120,24 @@ class f95:
     # <script>
     # var latestUpdates
     # Need to have an id for each item for now use f95_id. will fix later
-    def getDataForAtlas(data):
+    def updateAtlasTable(data):
+        Titem = {
+            key: data[key]
+            for key in [
+                "id_name",
+                "title",
+                "short_name",
+                "category",
+                "engine",
+                "status",
+                "version",
+                "creator",
+            ]
+        }
+        # Titem["id"] = Titem.pop("f95_id")
+        return Titem
+
+    def getDataforF95(data):
         Titem = {
             key: data[key]
             for key in [
@@ -130,18 +149,14 @@ class f95:
                 "status",
                 "version",
                 "creator",
-                "overview",
-                "censored",
-                "language",
-                "translations",
-                "genre",
-                "voice",
-                "os",
-                "release_date",
-                "length",
-                "last_update",
+                "site_url",
+                "thread_publish_date",
+                "last_thread_comment",
+                "last_record_update",
+                "replies",
+                "views",
+                "rating",
             ]
         }
-
         Titem["id"] = Titem.pop("f95_id")
         return Titem

@@ -29,19 +29,46 @@ def TruncateLocalF95Table():
 # -- Dynamic Functions --
 
 
-def UpdatetableDynamic(table, values, local):
-    if local == True:
-        con = sl.connect(dbName)
-        cursor = con.cursor()
-
+def UpdatetableDynamic(table, values, type):
     columns = ", ".join(values.keys())
     placeholders = ", ".join("?" * len(values))
-    sql = (
-        "INSERT OR REPLACE INTO "
-        + table
-        + " ({}) VALUES ({})".format(columns, placeholders)
-    )
+    sql = ""
+    data = ""
+
+    if type == database.LOCAL:
+        con = sl.connect(dbName)
+        cursor = con.cursor()
+        sql = (
+            "INSERT OR REPLACE INTO "
+            + table
+            + " ({}) VALUES ({})".format(columns, placeholders)
+        )
+    elif type == database.REMOTE:
+        con = mysql.connector.connect(
+            user=config.user_readdonly(),
+            password=config.password_readonly(),
+            host=config.host(),
+            database=config.database(),
+        )
+        cursor = con.cursor(prepared=True)
+        sql = (
+            "INSERT INTO "
+            + table
+            + " ({}) VALUES ({}) ON DUPLICATE KEY UPDATE ".format(columns, placeholders)
+        )
+        for id, value in enumerate(values):
+            data += value + "=VALUES(" + value + ")"
+            if id + 1 < len(values):
+                data += ","
+
+        # print(data)
+
+        # values = [int(x) if isinstance(x, bool) else x for x in values: x]
     values = [int(x) if isinstance(x, bool) else x for x in values.values()]
+    # print(sql)
+    sql = sql + data
+    # print(sql)
+    # print(values)
     cursor.execute(sql, values)
     con.commit()
     cursor.close()
