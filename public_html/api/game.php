@@ -14,7 +14,7 @@ $last_record_update = NULL;
 $games = NULL;
 $game_count = NULL;
 //Read in responses if available.
-if(isset( $_GET["id"])){$id = "f95_id=".trim($_GET["id"]);}
+if(isset( $_GET["id"])){$id = "id=".trim($_GET["id"]);}
 if(isset( $_GET["title"])){$title = "title=".trim($_GET["title"]);}
 if(isset( $_GET["version"])){$version = "version=".trim($_GET["version"]);}
 if(isset( $_GET["creator"])){$developer = "developer=".trim($_GET["creator"]);}
@@ -32,6 +32,11 @@ if (!$conn) {
 else{
     //verify we have an input
     $base =  "SELECT * FROM atlas";
+    $query1 = mysqli_query($conn, "SELECT COUNT(title) FROM atlas AS total");
+    $query2 = mysqli_query($conn, "SELECT MAX(last_db_update) FROM atlas");
+    $game_count = mysqli_fetch_row($query1)[0];
+    $last_db_update = mysqli_fetch_row($query2)[0];
+
     if($title != "" | $id != "" | $version != "" | $developer != "") 
     {
        
@@ -47,42 +52,31 @@ else{
         }
 
         $query = mysqli_query($conn, $base);
-        $query1 = mysqli_query($conn, "SELECT COUNT(title) FROM f95zone_data AS total");
-        $query2 = mysqli_query($conn, "SELECT MAX(last_record_update) FROM f95zone_data");
-        $game_count = mysqli_fetch_row($query1)[0];
-        $last_record_update = mysqli_fetch_row($query2)[0];
+        
+
         $rows = array();
         while($r = mysqli_fetch_assoc($query)) {
-            $rows[] = array("f95_id"=>$r['f95_id'],
+            $rows[] = array("id"=>$r['id'],
                             "title"=>$r['title'],
                             "short_name"=>$r['short_name'],
+                            "original_name"=>$r['original_name'],
                             "category"=>$r['category'],
                             "engine"=>$r['engine'],
-                            "banner_url"=>$r['banner_url'],
                             "status"=>$r['status'],
                             "version"=>$r['version'],
                             "developer"=>$r['developer'],
-                            "site_url"=>$r['site_url'],
+                            "creatir"=>$r['creator'],
                             "overview"=>$r['overview'],
-                            "last_thread_update"=>$r['last_thread_update'],
-                            "last_release"=>$r['last_release'],
                             "censored"=>$r['censored'],
                             "language"=>explode(",",$r['language']),
                             "translations"=>explode(",",$r['translations']),
                             "length"=>$r['length'],
-                            "vndb"=>$r['vndb'],
                             "genre"=>explode(",",$r['genre']),
                             "voice"=>explode(",",$r['voice']),
-                            "os"=>explode(",",$r['os']),
-                            "views"=>$r['views'],
-                            "likes"=>$r['likes'],
-                            "replies"=>$r['replies'],                            
+                            "os"=>explode(",",$r['os']),                     
                             "tags"=>explode(",",$r['tags']),
-                            "rating"=>$r['rating'],
-                            "preview_urls"=>explode(",",$r['preview_urls']),
-                            "last_record_update"=>$r['last_record_update'],
-                            "thread_publish_date"=>$r['thread_publish_date'],
-                            "last_thread_comment"=>$r['last_thread_comment']);           
+                            "last_db_update"=>$r['last_db_update']
+                        );           
         }
         $status = 200;
         $games = json_encode($rows);
@@ -90,7 +84,7 @@ else{
     }   
 }
 //output JSON
-$result = "{\"games\":" . $games . ",\"status\":" . $status.",\"total_games\":".$game_count.",\"last_record_update\":\"".$last_record_update."\"}";
+$result = "{\"games\":" . $games . ",\"status\":" . $status.",\"total_games\":".$game_count.",\"last_db_update\":\"".$last_db_update."\"}";
 print($result);
 
 //TODO:

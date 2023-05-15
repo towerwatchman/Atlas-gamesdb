@@ -30,6 +30,7 @@ class query:
                     language TINYTEXT,
                     translations TINYTEXT,
                     genre TINYTEXT,
+                    tags LONGTEXT,
                     voice TINYTEXT,
                     os TINYTEXT,
                     release_date DATE,
@@ -38,7 +39,7 @@ class query:
                     banner_wide LONGTEXT,
                     cover LONGTEXT,
                     logo LONGTEXT,
-                    last_update DATETIME
+                    last_db_update DATETIME
                 );
             """
         )

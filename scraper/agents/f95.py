@@ -4,6 +4,7 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 from scraper.utils.parser import *
 from scraper.utils.db import *
+from datetime import datetime
 
 # import re
 import time
@@ -46,7 +47,7 @@ class f95:
         )
 
         # Get total page count and ittereate through them
-        for item in range(1, self.getThreadPageCount() + 1):
+        for item in range(211, self.getThreadPageCount() + 1):
             # Page manipulation
             print("---- Starting Page:", str(item), "----")
             if item > 1:
@@ -57,46 +58,50 @@ class f95:
                 URL = baseURL() + "?order=post_date&direction=desc"
 
             # First attempt to get url
-            page = requests.get(URL)
-            if page.status_code == 200:
-                html = BeautifulSoup(page.content, "html.parser")
-                elements = html.find_all("div", class_="structItem")
-                # each element is an Item thread on 1 page. Each page will have 20 items
-                for element in elements:
-                    thread_items = element.select("div.structItem-title")[0].find_all(
-                        "a"
-                    )
-                    Titem = parser.ParseThreadItem(thread_items)
-                    Titem["thread_publish_date"] = (
-                        element.select("li.structItem-startDate")[0]
-                        .find_all("a")[0]
-                        .select("time")[0]["datetime"]
-                        .replace("T", " ")[:-5]
-                    )
-                    Titem["last_thread_comment"] = parser.ParseDateTimeItem(
-                        element.select("time.structItem-latestDate")
-                    ).replace("T", " ")[:-5]
-                    Titem["last_record_update"] = datetime.utcnow()
-                    Titem["replies"] = parser.ParseReplies(element)
-                    Titem["views"] = parser.ParseViews(element)
-                    Titem["rating"] = parser.ParseRating(element)
-                    # Assign name  + engine for each item
-
-                    print(Titem["title"])
-                    if Titem["category"] != "README":
-                        UpdatetableDynamic(
-                            "atlas", self.updateAtlasTable(Titem), db_type
+            try:
+                page = requests.get(URL)
+                if page.status_code == 200:
+                    html = BeautifulSoup(page.content, "html.parser")
+                    elements = html.find_all("div", class_="structItem")
+                    # each element is an Item thread on 1 page. Each page will have 20 items
+                    for element in elements:
+                        thread_items = element.select("div.structItem-title")[
+                            0
+                        ].find_all("a")
+                        Titem = parser.ParseThreadItem(thread_items)
+                        Titem["thread_publish_date"] = (
+                            element.select("li.structItem-startDate")[0]
+                            .find_all("a")[0]
+                            .select("time")[0]["datetime"]
+                            .replace("T", " ")[:-5]
                         )
-                    # last_thread_update = datetime.strptime(Titem['last_thread_update'].replace("T"," ")[:-5], '%Y-%m-%d %H:%M:%S')
-                    # print(last_thread_update ,">", last_db_update)
-                    # if last_thread_update >last_db_update:
-                    # print(Titem)
+                        Titem["last_thread_comment"] = parser.ParseDateTimeItem(
+                            element.select("time.structItem-latestDate")
+                        ).replace("T", " ")[:-5]
+                        Titem["last_record_update"] = datetime.utcnow()
+                        Titem["replies"] = parser.ParseReplies(element)
+                        Titem["views"] = parser.ParseViews(element)
+                        Titem["rating"] = parser.ParseRating(element)
+                        Titem["last_db_update"] = datetime.utcnow()
+                        # Assign name  + engine for each item
 
-                # print(Titem.keys())
-                time.sleep(2)
-                # break;
-            else:
-                print("error")
+                        print(Titem["title"])
+                        if Titem["category"] != "README":
+                            UpdatetableDynamic(
+                                "atlas", self.updateAtlasTable(Titem), db_type
+                            )
+                        # last_thread_update = datetime.strptime(Titem['last_thread_update'].replace("T"," ")[:-5], '%Y-%m-%d %H:%M:%S')
+                        # print(last_thread_update ,">", last_db_update)
+                        # if last_thread_update >last_db_update:
+                        # print(Titem)
+
+                    # print(Titem.keys())
+                    time.sleep(2)
+                    # break;
+                else:
+                    print("error")
+            except:
+                print("Error")
 
     def downloadLatest(self, type):
         print(type)
@@ -132,6 +137,7 @@ class f95:
                 "status",
                 "version",
                 "creator",
+                "last_db_update",
             ]
         }
         # Titem["id"] = Titem.pop("f95_id")
