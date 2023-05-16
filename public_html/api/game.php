@@ -84,6 +84,11 @@ else{
     }   
 }
 //output JSON
+if($games == "")
+{
+    $games = "[]";
+};
+
 $result = "{\"games\":" . $games . ",\"status\":" . $status.",\"total_games\":".$game_count.",\"last_db_update\":\"".$last_db_update."\"}";
 print($result);
 
