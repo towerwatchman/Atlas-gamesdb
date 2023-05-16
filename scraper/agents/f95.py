@@ -47,7 +47,7 @@ class f95:
         )
 
         # Get total page count and ittereate through them
-        for item in range(211, self.getThreadPageCount() + 1):
+        for item in range(1, self.getThreadPageCount() + 1):
             # Page manipulation
             print("---- Starting Page:", str(item), "----")
             if item > 1:
@@ -96,12 +96,16 @@ class f95:
                         # print(Titem)
 
                     # print(Titem.keys())
-                    time.sleep(2)
+                    time.sleep(1)
                     # break;
                 else:
                     print("error")
-            except:
-                print("Error")
+            except Exception as inst:
+                print(type(inst))  # the exception type
+                print(inst.args)  # arguments stored in .args
+                print(inst)  # __str__ allows args to be printed directly,
+                time.sleep(10)
+                continue
 
     def downloadLatest(self, type):
         print(type)
