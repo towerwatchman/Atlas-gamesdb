@@ -133,3 +133,24 @@ def DeleteDatabase(type):
         if Path((dbName)).is_file() == True:
             print("Deleting Local Database")
             os.remove(dbName)
+
+
+def findIdByTitle(table, id_name, type):
+    if type == database.LOCAL:
+        con = sl.connect(dbName)
+        cursor = con.cursor()
+
+    elif type == database.REMOTE:
+        con = mysql.connector.connect(
+            user=config.user_readdonly(),
+            password=config.password_readonly(),
+            host=config.host(),
+            database=config.database(),
+        )
+        cursor = con.cursor(prepared=True)
+
+    query = "SELECT id FROM " + table + " WHERE id_name = '" + id_name + "'"
+
+    cursor.execute(query)
+    rows = cursor.fetchall()
+    return rows

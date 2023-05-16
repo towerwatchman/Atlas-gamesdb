@@ -1,13 +1,12 @@
 import collections
 import re
-from scraper.datatypes.data import *
 
 
 class parser:
     def __init__(self) -> None:
         pass
 
-    def ParseThreadItem(thread_items):
+    def ParseThreadItem(thread_items, record):
         Titem = {
             "f95_id": "",
             "short_name": "",
@@ -65,7 +64,7 @@ class parser:
                 ).upper()
 
             Titem["id_name"] = Titem["short_name"] + "_" + Titem["creator"].upper()
-        return Titem
+        # return Titem
 
     def ParseDateTimeItem(item):
         if len(item) <= 0:

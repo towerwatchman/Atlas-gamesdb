@@ -39,6 +39,8 @@ class query:
                     banner_wide LONGTEXT,
                     cover LONGTEXT,
                     logo LONGTEXT,
+                    wallpaper LONGTEXT,
+                    previews LONGTEXT,
                     last_db_update DATETIME
                 );
             """
@@ -49,15 +51,16 @@ class query:
         query = """
                 CREATE TABLE IF NOT EXISTS f95_zone_data (
                     f95_id INT NOT NULL UNIQUE PRIMARY KEY,
-                    id INT NOT NULL,
+                    id INT NOT NULL UNIQUE,
                     banner_url LONGTEXT, 
                     site_url LONGTEXT,
-                    thread_update DATETIME,
+                    last_thread_comment DATETIME,
                     views INT,
                     likes TINYTEXT,
                     tags LONGTEXT,
                     rating TINYTEXT,
-                    screens LONGTEXT
+                    screens LONGTEXT,
+                    replies INT
                 );
             """
         return query
