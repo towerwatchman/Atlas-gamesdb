@@ -83,6 +83,7 @@ def CreateDatabase(type):
             print("Local Database Exist")
         con = sl.connect(dbName)
         with con:
+            con.execute(query.createIdSequence(database.LOCAL))
             con.execute(query.createAtlasTable(database.LOCAL))
             con.execute(query.createF95Table(database.LOCAL))
     # Remote
@@ -96,9 +97,33 @@ def CreateDatabase(type):
         print("Creating Remote Database")
         con = cnx.cursor()
         with con:
+            con.execute(query.createIdSequence(database.REMOTE))
             con.execute(query.createAtlasTable(database.REMOTE))
             con.execute(query.createF95Table(database.REMOTE))
         cnx.close()
+
+
+def getLastUsedId(type):
+    if type == database.LOCAL:
+        con = sl.connect(dbName)
+        cursor = con.cursor()
+
+    elif type == database.REMOTE:
+        con = mysql.connector.connect(
+            user=config.user_readdonly(),
+            password=config.password_readonly(),
+            host=config.host(),
+            database=config.database(),
+        )
+        cursor = con.cursor(prepared=True)
+
+    query = "SELECT id FROM id_sequence"
+
+    cursor.execute(query)
+    id = cursor.fetchone()
+    if cursor.rowcount == 0:
+        id = 0
+    return id
 
 
 def DeleteTables(type):
@@ -152,5 +177,7 @@ def findIdByTitle(table, id_name, type):
     query = "SELECT id FROM " + table + " WHERE id_name = '" + id_name + "'"
 
     cursor.execute(query)
-    rows = cursor.fetchall()
-    return rows
+    id = cursor.fetchone()
+    if cursor.rowcount == 0:
+        id = 0
+    return id

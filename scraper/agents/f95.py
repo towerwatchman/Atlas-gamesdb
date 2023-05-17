@@ -33,7 +33,7 @@ class f95:
         else:
             return 0
 
-    def downloadThreadSummary(self, type, include_game_info, last_db_update, db_type):
+    def downloadThreadSummary(self, type, include_game_info, db_type):
         # assign records
         atlasRecord = gameRecord.atlasRecord()
         f95Record = gameRecord.f95Record()
@@ -44,15 +44,12 @@ class f95:
             type,
             "\nInclude Game Metadata:",
             include_game_info,
-            "\nLast Database update:",
-            last_db_update,
             "\n",
             pages,
             "total pages",
         )
-
         # Get total page count and ittereate through them
-        for item in range(1, self.getThreadPageCount() + 1):
+        for item in range(1, 2):  # self.getThreadPageCount() + 1):
             # Page manipulation
             print("---- Starting Page:", str(item), "----")
             if item > 1:
@@ -93,14 +90,18 @@ class f95:
 
                         try:
                             if atlasRecord["category"] != "README":
+                                # Check if item is in table. If not then get last used id. increment 1 for next id
+                                id = findIdByTitle(
+                                    "atlas", atlasRecord["id_name"], db_type
+                                )
+                                if id == 0:
+                                    id = getLastUsedId() + 1
+
+                                atlasRecord["id"] = id
+                                f95Record["id"] = id
                                 UpdatetableDynamic(
                                     "atlas", self.formatDictionary(atlasRecord), db_type
                                 )
-                                # Return Id from database and store in f95 record
-                                f95Record["id"] = findIdByTitle(
-                                    "atlas", atlasRecord["id_name"], db_type
-                                )[0][0]
-                                print(f95Record["id"])
                                 UpdatetableDynamic(
                                     "f95_zone_data",
                                     self.formatDictionary(f95Record),

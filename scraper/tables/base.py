@@ -9,12 +9,9 @@ class query:
         us = ""
         if type == database.REMOTE:
             us = "_"
-        query = (
-            """
+        query = """
                 CREATE TABLE IF NOT EXISTS atlas (
-                    id INTEGER PRIMARY KEY AUTO"""
-            + us
-            + """INCREMENT,
+                    id INTEGER PRIMARY KEY NOT NULL,
                     id_name LONGTEXT NOT NULL UNIQUE,
                     short_name TINYTEXT NOT NULL,
                     title TINYTEXT NOT NULL, 
@@ -44,7 +41,6 @@ class query:
                     last_db_update DATETIME
                 );
             """
-        )
         return query
 
     def createF95Table(type):
@@ -67,11 +63,10 @@ class query:
             """
         return query
 
-    def testTable():
+    def createIdSequence(type):
         query = """
-                CREATE TABLE IF NOT EXISTS test (
-                    id INT NOT NULL UNIQUE PRIMARY KEY,
-                    name TINYTEXT
+                CREATE TABLE IF NOT EXISTS id_sequence (
+                    id INT NOT NULL
                 );
             """
         return query
