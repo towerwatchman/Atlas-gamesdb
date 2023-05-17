@@ -55,6 +55,8 @@ class query:
                     banner_url LONGTEXT, 
                     site_url LONGTEXT,
                     last_thread_comment DATETIME,
+                    thread_publish_date DATETIME,
+                    last_record_update DATETIME,
                     views INT,
                     likes TINYTEXT,
                     tags LONGTEXT,

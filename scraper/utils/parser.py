@@ -1,37 +1,26 @@
 import collections
 import re
+from scraper.datatypes.data import *
 
 
 class parser:
     def __init__(self) -> None:
         pass
 
-    def ParseThreadItem(thread_items, record):
-        Titem = {
-            "f95_id": "",
-            "short_name": "",
-            "category": "",
-            "engine": "",
-            "status": "",
-            "title": "",
-            "creator": "",
-            "version": "",
-            "site_url": "",
-        }
-
+    def ParseThreadItem(thread_items, atlasRecord, f95Record):
         for thread_item in thread_items:
-            Titem["site_url"] = "https://f95zone.to" + thread_item["href"]
+            f95Record["site_url"] = "https://f95zone.to" + thread_item["href"]
             item = thread_item.text
             # print(item)
             if item.upper() in data.Tcategory():
-                Titem["category"] = item.replace("[", "").replace("]", "")
+                atlasRecord["category"] = item.replace("[", "").replace("]", "")
             elif item.upper() in data.Tengine():
-                Titem["engine"] = item.replace("[", "").replace("]", "")
+                atlasRecord["engine"] = item.replace("[", "").replace("]", "")
             elif item.upper() in data.Tstaus():
-                Titem["status"] = item.replace("[", "").replace("]", "")
+                atlasRecord["status"] = item.replace("[", "").replace("]", "")
             else:  # Parse Game Name
                 strings = item.split("[")
-                Titem["title"] = strings[0].replace("[", "").replace("]", "")
+                atlasRecord["title"] = strings[0].replace("[", "").replace("]", "")
                 if len(strings) == 2:
                     tmp = re.sub(
                         "[\W_]+",
@@ -39,31 +28,35 @@ class parser:
                         strings[1].strip().replace("[", "").replace("]", ""),
                     ).upper()
                     if tmp in data.Tversion():  # check if this is version or dev
-                        Titem["version"] = (
+                        atlasRecord["version"] = (
                             strings[1].replace("[", "").replace("]", "").strip()
                         )
                     else:
-                        Titem["creator"] = (
+                        atlasRecord["creator"] = (
                             strings[1].replace("[", "").replace("]", "").strip()
                         )
                 elif len(strings) == 3:
-                    Titem["version"] = (
+                    atlasRecord["version"] = (
                         strings[1].replace("[", "").replace("]", "").strip()
                     )
-                    Titem["creator"] = (
+                    atlasRecord["creator"] = (
                         strings[2].replace("[", "").replace("]", "").strip()
                     )
 
-                Titem["f95_id"] = re.sub(
+                f95Record["f95_id"] = re.sub(
                     "[\W_]+",
                     "",
-                    Titem["site_url"].split(".")[len(Titem["site_url"].split(".")) - 1],
+                    f95Record["site_url"].split(".")[
+                        len(f95Record["site_url"].split(".")) - 1
+                    ],
                 )
-                Titem["short_name"] = re.sub(
-                    "[\W_]+", "", Titem["title"].strip().replace(" ", "")
+                atlasRecord["short_name"] = re.sub(
+                    "[\W_]+", "", atlasRecord["title"].strip().replace(" ", "")
                 ).upper()
 
-            Titem["id_name"] = Titem["short_name"] + "_" + Titem["creator"].upper()
+            atlasRecord["id_name"] = (
+                atlasRecord["short_name"] + "_" + atlasRecord["creator"].upper()
+            )
         # return Titem
 
     def ParseDateTimeItem(item):

@@ -73,46 +73,50 @@ class f95:
                         thread_items = element.select("div.structItem-title")[
                             0
                         ].find_all("a")
-                        parser.ParseThreadItem(thread_items)
-                        Titem["thread_publish_date"] = (
+                        parser.ParseThreadItem(thread_items, atlasRecord, f95Record)
+                        f95Record["thread_publish_date"] = (
                             element.select("li.structItem-startDate")[0]
                             .find_all("a")[0]
                             .select("time")[0]["datetime"]
                             .replace("T", " ")[:-5]
                         )
-                        Titem["last_thread_comment"] = parser.ParseDateTimeItem(
+                        f95Record["last_thread_comment"] = parser.ParseDateTimeItem(
                             element.select("time.structItem-latestDate")
                         ).replace("T", " ")[:-5]
-                        Titem["last_record_update"] = datetime.utcnow()
-                        Titem["replies"] = parser.ParseReplies(element)
-                        Titem["views"] = parser.ParseViews(element)
-                        Titem["rating"] = parser.ParseRating(element)
-                        Titem["last_db_update"] = datetime.utcnow()
+                        f95Record["last_record_update"] = datetime.utcnow()
+                        f95Record["replies"] = parser.ParseReplies(element)
+                        f95Record["views"] = parser.ParseViews(element)
+                        f95Record["rating"] = parser.ParseRating(element)
+                        atlasRecord["last_db_update"] = datetime.utcnow()
                         # Get details for each thread item
                         # print(Titem["title"])
 
                         try:
-                            if Titem["category"] != "README":
+                            if atlasRecord["category"] != "README":
                                 UpdatetableDynamic(
-                                    "atlas", self.getDataAtlasTable(Titem), db_type
+                                    "atlas", self.formatDictionary(atlasRecord), db_type
                                 )
-                                # get id from db
-                                Titem["id"] = findIdByTitle(
-                                    "atlas", Titem["id_name"], db_type
+                                # Return Id from database and store in f95 record
+                                f95Record["id"] = findIdByTitle(
+                                    "atlas", atlasRecord["id_name"], db_type
                                 )[0][0]
-                                print(Titem["id"])
+                                print(f95Record["id"])
+                                UpdatetableDynamic(
+                                    "f95_zone_data",
+                                    self.formatDictionary(f95Record),
+                                    db_type,
+                                )
+                                # if include_game_info:
+                                #    TitemDetail = self.downloadThreadDetails(
+                                #        self, f95Record["site_url"]
+                                #    )
+                                # Titem.update(TitemDetail)
 
-                                if include_game_info:
-                                    TitemDetail = self.downloadThreadDetails(
-                                        self, Titem["site_url"]
-                                    )
-                                    Titem.update(TitemDetail)
-
-                                    UpdatetableDynamic(
-                                        "f95_zone_data",
-                                        self.getDataforF95(Titem),
-                                        db_type,
-                                    )
+                                # UpdatetableDynamic(
+                                #    "f95_zone_data",
+                                #    self.getDataforF95(Titem),
+                                #    db_type,
+                                # )
                         except Exception as ex:
                             print(ex)
                             print("Error: Db Error")
@@ -123,7 +127,8 @@ class f95:
                         # print(Titem)
 
                     # print(Titem.keys())
-                    time.sleep(random.uniform(1.0, 2.2))
+                    if not include_game_info:
+                        time.sleep(random.uniform(1.0, 2.2))
                     # break;
                 else:
                     print("Page Timeout Error, Waiting 10 seconds")
@@ -425,47 +430,6 @@ class f95:
     # <script>
     # var latestUpdates
     # Need to have an id for each item for now use f95_id. will fix later
-    def getDataAtlasTable(data):
-        Titem = {
-            key: data[key]
-            for key in [
-                "id_name",
-                "title",
-                "short_name",
-                "category",
-                "engine",
-                "status",
-                "version",
-                "creator",
-                "overview",
-                "censored",
-                "language",
-                "length",
-                "voice",
-                "os",
-                "release_date",
-                "translations",
-                "tags",
-                "last_db_update",
-            ]
-        }
-        return Titem
-
-    def getDataforF95(data):
-        Titem = {
-            key: data[key]
-            for key in [
-                "id",
-                "f95_id",
-                "banner_url",
-                "site_url",
-                "last_thread_comment",
-                "views",
-                "likes",
-                "tags",
-                "rating",
-                "screens",
-                "replies",
-            ]
-        }
-        return Titem
+    def formatDictionary(data):
+        data = {k: v for k, v in data.items() if v}
+        return data
