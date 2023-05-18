@@ -42,5 +42,6 @@ class gameRecord:
     def f95Record():
         Titem = {
             "id": "",
+            "f95_id": "",
         }
         return Titem

@@ -72,6 +72,7 @@ def UpdatetableDynamic(table, values, type):
     cursor.execute(sql, values)
     con.commit()
     cursor.close()
+    con.close()
 
 
 def CreateDatabase(type):

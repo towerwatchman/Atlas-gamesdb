@@ -7,6 +7,7 @@ from scraper.utils.db import *
 from scraper.datatypes.record import *
 from datetime import datetime
 import random
+from threading import Thread
 
 # import re
 import time
@@ -50,6 +51,7 @@ class f95:
             "total pages",
         )
         # Get total page count and ittereate through them
+        counter = 0
         for item in range(1, self.getThreadPageCount() + 1):
             try:
                 # Page manipulation
@@ -70,7 +72,10 @@ class f95:
                 if page.status_code == 200:
                     html = BeautifulSoup(page.content, "html.parser")
                     elements = html.find_all("div", class_="structItem")
+                    # create thread for each item
+                    threads = []
                     # each element is an Item thread on 1 page. Each page will have 20 items
+                    thread_id = 0
                     for element in elements:
                         thread_items = element.select("div.structItem-title")[
                             0
@@ -95,32 +100,31 @@ class f95:
                         try:
                             if atlasRecord["category"] != "README":
                                 # Check if item is in table. If not then get last used id. increment 1 for next id
-                                status = "Updating"
-                                id = findIdByTitle(
-                                    "atlas", atlasRecord["id_name"], db_type
-                                )
-                                if id == 0:
-                                    status = "Inserting"
-                                    id = getLastUsedId(db_type) + 1
-                                    UpdatetableDynamic(
-                                        "id_sequence",
-                                        {"tbl": "atlas", "id": id},
-                                        db_type,
-                                    )
-                                print(status, " Record:", id)
-                                atlasRecord["id"] = id
-                                f95Record["id"] = id
-
-                                UpdatetableDynamic(
+                                # print("Updating Record:", counter)
+                                counter += 1
+                                self.updateRecord(
+                                    f95,
                                     "atlas",
                                     self.formatDictionary(atlasRecord),
-                                    db_type,
-                                )
-                                UpdatetableDynamic(
-                                    "f95_zone_data",
                                     self.formatDictionary(f95Record),
                                     db_type,
+                                    thread_id,
                                 )
+                                # t = Thread(
+                                #    target=self.updateRecord,
+                                #    args=(
+                                #        f95,
+                                #        "atlas",
+                                #        self.formatDictionary(atlasRecord),
+                                #        self.formatDictionary(f95Record),
+                                #        db_type,
+                                #        thread_id,
+                                #    ),
+                                # )
+                                # t.start()
+                                # threads.append(t)
+                                thread_id += 1
+
                                 # if include_game_info:
                                 #    TitemDetail = self.downloadThreadDetails(
                                 #        self, f95Record["site_url"]
@@ -145,6 +149,9 @@ class f95:
                     if not include_game_info:
                         time.sleep(random.uniform(1.0, 2.2))
                     # break;
+
+                    # for t in threads:
+                    #    t.join()
                 else:
                     print("Page Timeout Error, Waiting 10 seconds")
                     time.sleep(10)
@@ -444,3 +451,14 @@ class f95:
     def formatDictionary(data):
         data = {k: v for k, v in data.items() if v}
         return data
+
+    def updateRecord(self, table, aRecord, fRecord, db_type, thread_id):
+        UpdatetableDynamic(table, aRecord, db_type)
+        print(
+            "Database update completed for f95_id:",
+            fRecord["f95_id"],
+            " on thread:",
+            thread_id,
+        )
+        # id = findIdByTitle(table, aRecord["id_name"], db_type)
+        # UpdatetableDynamic(table=)
