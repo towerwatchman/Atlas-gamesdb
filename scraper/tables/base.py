@@ -11,7 +11,7 @@ class query:
             us = "_"
         query = """
                 CREATE TABLE IF NOT EXISTS atlas (
-                    id INTEGER PRIMARY KEY NOT NULL,
+                    id INTEGER PRIMARY KEY NOT NULL UNIQUE,
                     id_name LONGTEXT NOT NULL UNIQUE,
                     short_name TINYTEXT NOT NULL,
                     title TINYTEXT NOT NULL, 
@@ -66,6 +66,7 @@ class query:
     def createIdSequence(type):
         query = """
                 CREATE TABLE IF NOT EXISTS id_sequence (
+                    tbl TINYTEXT NOT NULL,
                     id INT NOT NULL
                 );
             """

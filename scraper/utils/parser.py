@@ -51,7 +51,9 @@ class parser:
                     ],
                 )
                 atlasRecord["short_name"] = re.sub(
-                    "[\W_]+", "", atlasRecord["title"].strip().replace(" ", "")
+                    "[\W_]+",
+                    "",
+                    atlasRecord["title"].strip().replace(" ", ""),
                 ).upper()
 
             atlasRecord["id_name"] = (

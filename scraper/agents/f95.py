@@ -34,6 +34,8 @@ class f95:
             return 0
 
     def downloadThreadSummary(self, type, include_game_info, db_type):
+        #Start remote connection
+        cnx = InitRemoteConnection()
         # assign records
         atlasRecord = gameRecord.atlasRecord()
         f95Record = gameRecord.f95Record()
@@ -49,18 +51,22 @@ class f95:
             "total pages",
         )
         # Get total page count and ittereate through them
-        for item in range(1, 2):  # self.getThreadPageCount() + 1):
-            # Page manipulation
-            print("---- Starting Page:", str(item), "----")
-            if item > 1:
-                URL = (
-                    baseURL() + "page-" + str(item) + "?order=post_date&direction=desc"
-                )
-            else:
-                URL = baseURL() + "?order=post_date&direction=desc"
-
-            # First attempt to get url
+        for item in range(1, self.getThreadPageCount() + 1):
             try:
+                # Page manipulation
+                print("---- Starting Page:", str(item), "----")
+                if item > 1:
+                    URL = (
+                        baseURL()
+                        + "page-"
+                        + str(item)
+                        + "?order=post_date&direction=desc"
+                    )
+                else:
+                    URL = baseURL() + "?order=post_date&direction=desc"
+
+                # First attempt to get url
+
                 page = requests.get(URL)
                 if page.status_code == 200:
                     html = BeautifulSoup(page.content, "html.parser")
@@ -87,25 +93,32 @@ class f95:
                         atlasRecord["last_db_update"] = datetime.utcnow()
                         # Get details for each thread item
                         # print(Titem["title"])
-
                         try:
                             if atlasRecord["category"] != "README":
                                 # Check if item is in table. If not then get last used id. increment 1 for next id
+                                status = "Updating"
                                 id = findIdByTitle(
-                                    "atlas", atlasRecord["id_name"], db_type
+                                    "atlas", atlasRecord["id_name"], db_type, cnx
                                 )
                                 if id == 0:
-                                    id = getLastUsedId() + 1
-
+                                    status = "Inserting"
+                                    id = getLastUsedId(db_type, cnx) + 1
+                                    UpdatetableDynamic(
+                                        "id_sequence",
+                                        {"tbl": "atlas", "id": id},
+                                        db_type, cnx
+                                    )
+                                print(status, " Record:", id)
                                 atlasRecord["id"] = id
                                 f95Record["id"] = id
+
                                 UpdatetableDynamic(
-                                    "atlas", self.formatDictionary(atlasRecord), db_type
+                                    "atlas", self.formatDictionary(atlasRecord), db_type, cnx
                                 )
                                 UpdatetableDynamic(
                                     "f95_zone_data",
                                     self.formatDictionary(f95Record),
-                                    db_type,
+                                    db_type, cnx
                                 )
                                 # if include_game_info:
                                 #    TitemDetail = self.downloadThreadDetails(
@@ -120,8 +133,8 @@ class f95:
                                 # )
                         except Exception as ex:
                             print(ex)
-                            print("Error: Db Error")
                             continue
+
                         # last_thread_update = datetime.strptime(Titem['last_thread_update'].replace("T"," ")[:-5], '%Y-%m-%d %H:%M:%S')
                         # print(last_thread_update ,">", last_db_update)
                         # if last_thread_update >last_db_update:
@@ -136,10 +149,6 @@ class f95:
                     time.sleep(10)
             except Exception as ex:
                 print(ex)
-                print("Error: Waiting 10 secs before continuning")  # the exception type
-                # print(str(inst.args))  # arguments stored in .args
-                time.sleep(10)
-                continue
 
     def downloadThreadDetails(self, url):
         time.sleep(1)  # wait another sec before getting individual page info
@@ -434,3 +443,5 @@ class f95:
     def formatDictionary(data):
         data = {k: v for k, v in data.items() if v}
         return data
+
+    def updateRemote():
