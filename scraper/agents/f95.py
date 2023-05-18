@@ -34,8 +34,7 @@ class f95:
             return 0
 
     def downloadThreadSummary(self, type, include_game_info, db_type):
-        #Start remote connection
-        cnx = InitRemoteConnection()
+        # Start remote connection
         # assign records
         atlasRecord = gameRecord.atlasRecord()
         f95Record = gameRecord.f95Record()
@@ -98,27 +97,29 @@ class f95:
                                 # Check if item is in table. If not then get last used id. increment 1 for next id
                                 status = "Updating"
                                 id = findIdByTitle(
-                                    "atlas", atlasRecord["id_name"], db_type, cnx
+                                    "atlas", atlasRecord["id_name"], db_type
                                 )
                                 if id == 0:
                                     status = "Inserting"
-                                    id = getLastUsedId(db_type, cnx) + 1
+                                    id = getLastUsedId(db_type) + 1
                                     UpdatetableDynamic(
                                         "id_sequence",
                                         {"tbl": "atlas", "id": id},
-                                        db_type, cnx
+                                        db_type,
                                     )
                                 print(status, " Record:", id)
                                 atlasRecord["id"] = id
                                 f95Record["id"] = id
 
                                 UpdatetableDynamic(
-                                    "atlas", self.formatDictionary(atlasRecord), db_type, cnx
+                                    "atlas",
+                                    self.formatDictionary(atlasRecord),
+                                    db_type,
                                 )
                                 UpdatetableDynamic(
                                     "f95_zone_data",
                                     self.formatDictionary(f95Record),
-                                    db_type, cnx
+                                    db_type,
                                 )
                                 # if include_game_info:
                                 #    TitemDetail = self.downloadThreadDetails(
@@ -443,5 +444,3 @@ class f95:
     def formatDictionary(data):
         data = {k: v for k, v in data.items() if v}
         return data
-
-    def updateRemote():

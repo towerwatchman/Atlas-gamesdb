@@ -10,16 +10,6 @@ from scraper.config import *
 dbName = "data.db"
 
 
-def InitRemoteConnection():
-    cnx = mysql.connector.connect(
-        user=config.user_readdonly(),
-        password=config.password_readonly(),
-        host=config.host(),
-        database=config.database(),
-    )
-    return cnx
-
-
 # LOCAL DB MANIPULATION
 def DeleteLocalDatabase():
     if Path((dbName)).is_file() == True:
@@ -131,6 +121,7 @@ def getLastUsedId(type):
 
     cursor.execute(query)
     id = cursor.fetchone()
+    # cursor.close()
     if id == None:
         id = 0
     else:
@@ -190,6 +181,7 @@ def findIdByTitle(table, id_name, type):
 
     cursor.execute(query)
     id = cursor.fetchone()
+    # cursor.close()
     if id == None:
         return 0
     else:
