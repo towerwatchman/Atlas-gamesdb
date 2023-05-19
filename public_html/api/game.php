@@ -65,7 +65,7 @@ else{
                             "status"=>$r['status'],
                             "version"=>$r['version'],
                             "developer"=>$r['developer'],
-                            "creatir"=>$r['creator'],
+                            "creator"=>$r['creator'],
                             "overview"=>$r['overview'],
                             "censored"=>$r['censored'],
                             "language"=>explode(",",$r['language']),

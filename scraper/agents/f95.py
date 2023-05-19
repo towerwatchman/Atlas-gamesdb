@@ -102,16 +102,18 @@ class f95:
                                 # Check if item is in table. If not then get last used id. increment 1 for next id
                                 # print("Updating Record:", counter)
                                 counter += 1
-                                self.updateRecord(
-                                    f95,
-                                    "atlas",
-                                    self.formatDictionary(atlasRecord),
-                                    self.formatDictionary(f95Record),
-                                    db_type,
-                                    thread_id,
+                                t = Thread(
+                                    target=self.updateRecord,
+                                    args=(
+                                        f95,
+                                        "atlas",
+                                        self.formatDictionary(atlasRecord),
+                                        self.formatDictionary(f95Record),
+                                        db_type,
+                                        thread_id,
+                                    ),
                                 )
-                                # t = Thread(
-                                #    target=self.updateRecord,
+                                # self.updateRecord,
                                 #    args=(
                                 #        f95,
                                 #        "atlas",
@@ -121,8 +123,8 @@ class f95:
                                 #        thread_id,
                                 #    ),
                                 # )
-                                # t.start()
-                                # threads.append(t)
+                                t.start()
+                                threads.append(t)
                                 thread_id += 1
 
                                 # if include_game_info:
@@ -150,8 +152,8 @@ class f95:
                         time.sleep(random.uniform(1.0, 2.2))
                     # break;
 
-                    # for t in threads:
-                    #    t.join()
+                    for t in threads:
+                        t.join()
                 else:
                     print("Page Timeout Error, Waiting 10 seconds")
                     time.sleep(10)
@@ -460,5 +462,6 @@ class f95:
             " on thread:",
             thread_id,
         )
-        # id = findIdByTitle(table, aRecord["id_name"], db_type)
-        # UpdatetableDynamic(table=)
+        id = findIdByTitle(table, aRecord["id_name"], db_type)
+        fRecord["id"] = id
+        UpdatetableDynamic("f95_zone_data", fRecord, db_type)
