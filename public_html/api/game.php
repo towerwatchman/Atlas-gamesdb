@@ -54,32 +54,23 @@ else{
         $query = mysqli_query($conn, $base);
         
         $tmp = mysqli_fetch_assoc($query);
-        $rows = array();
-        while($r = mysqli_fetch_assoc($query)) {
-            $rows[] = array("id"=>$r['id'],
-                            "title"=>$r['title'],
-                            "short_name"=>$r['short_name'],
-                            "original_name"=>$r['original_name'],
-                            "category"=>$r['category'],
-                            "engine"=>$r['engine'],
-                            "status"=>$r['status'],
-                            "version"=>$r['version'],
-                            "developer"=>$r['developer'],
-                            "creator"=>$r['creator'],
-                            "overview"=>$r['overview'],
-                            "censored"=>$r['censored'],
-                            "language"=>explode(",",$r['language']),
-                            "translations"=>explode(",",$r['translations']),
-                            "length"=>$r['length'],
-                            "genre"=>explode(",",$r['genre']),
-                            "voice"=>explode(",",$r['voice']),
-                            "os"=>explode(",",$r['os']),                     
-                            "tags"=>explode(",",$r['tags']),
-                            "last_db_update"=>$r['last_db_update']
-                        );           
-        }
-        $status = 200;
+        
+        //Get f95 data if there is any
+
+        $query3 = mysqli_query($conn, "SELECT * FROM f95_zone_data WHERE id=".$tmp["id"]);
+
+        //print("SELECT * FROM f95_zone_data WHERE id= " .$tmp["id"]);
+
+        $f95 = mysqli_fetch_assoc($query3);
+        
+        
+        $tmp["f95"] = $f95;
+        
+        
         $games = json_encode($tmp);
+        //print($f95);
+        $status = 200;
+
         mysqli_close($conn);
     }   
 }

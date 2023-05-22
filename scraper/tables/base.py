@@ -62,7 +62,7 @@ class query:
                     tags LONGTEXT,
                     rating TINYTEXT,
                     screens LONGTEXT,
-                    replies INT
+                    replies TINYTEXT
                 );
             """
         return query
