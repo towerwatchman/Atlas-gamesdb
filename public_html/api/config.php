@@ -1,6 +1,6 @@
 <?php
     $servername = "localhost";
-    $database = "u902432006_games";
-    $username = "u902432006_dbreader";
+    $database = "games";
+    $username = "u902432006_dbwriter";
     $password = "1Z#y!*Ki+";
 ?>
