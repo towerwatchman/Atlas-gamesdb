@@ -57,7 +57,7 @@ class query:
                     last_thread_comment DATETIME,
                     thread_publish_date DATETIME,
                     last_record_update DATETIME,
-                    views INT,
+                    views TINYTEXT,
                     likes TINYTEXT,
                     tags LONGTEXT,
                     rating TINYTEXT,

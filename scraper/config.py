@@ -3,7 +3,7 @@ class config:
         pass
 
     def user_readdonly():
-        user = "u902432006_dbreader"
+        user = "u902432006_dbwriter"
         return user
 
     def password_readonly():
@@ -11,9 +11,11 @@ class config:
         return password
 
     def host():
-        host = "atlas-gamesdb.com"
+        # host = "atlas-gamesdb.com"
+        # host = "160.238.36.214"
+        host = "localhost"
         return host
 
     def database():
-        database = "u902432006_games"
+        database = "games"
         return database
