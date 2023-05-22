@@ -53,7 +53,7 @@ else{
 
         $query = mysqli_query($conn, $base);
         
-
+        $tmp = mysqli_fetch_assoc($query);
         $rows = array();
         while($r = mysqli_fetch_assoc($query)) {
             $rows[] = array("id"=>$r['id'],
@@ -79,7 +79,7 @@ else{
                         );           
         }
         $status = 200;
-        $games = json_encode($rows);
+        $games = json_encode($tmp);
         mysqli_close($conn);
     }   
 }
