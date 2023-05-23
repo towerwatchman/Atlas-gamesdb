@@ -79,3 +79,21 @@ class query:
     def deleteTable(table):
         query = "DROP TABLE IF EXISTS `" + table + "`;"
         return query
+
+    def createUpdateTable(type):
+        us = ""
+        if type == database.REMOTE:
+            us = "_"
+        query = (
+            """
+                CREATE TABLE IF NOT EXISTS updates (
+                    id INTEGER PRIMARY KEY AUTO"""
+            + us
+            + """INCREMENT,
+                    last_update DATETIME NOT NULL,
+                    file_name TINYTEXT NOT NULL,
+                    hash LONGTEXT NOT NULL
+                );
+            """
+        )
+        return query

@@ -87,6 +87,8 @@ def CreateDatabase(type):
             con.execute(query.createIdSequence(database.LOCAL))
             con.execute(query.createAtlasTable(database.LOCAL))
             con.execute(query.createF95Table(database.LOCAL))
+            con.execute(query.createUpdateTable(database.LOCAL))
+        con.close()
     # Remote
     elif type == database.REMOTE:
         cnx = mysql.connector.connect(
@@ -101,7 +103,8 @@ def CreateDatabase(type):
             con.execute(query.createIdSequence(database.REMOTE))
             con.execute(query.createAtlasTable(database.REMOTE))
             con.execute(query.createF95Table(database.REMOTE))
-        cnx.close()
+            con.execute(query.createUpdateTable(database.REMOTE))
+        con.close()
 
 
 def getLastUsedId(type):
@@ -167,6 +170,7 @@ def DeleteDatabase(type):
 def findIdByTitle(table, id_name, type):
     if type == database.LOCAL:
         con = sl.connect(dbName)
+        con.row_factory = sl.Row
         cursor = con.cursor()
 
     elif type == database.REMOTE:
@@ -187,3 +191,26 @@ def findIdByTitle(table, id_name, type):
         return 0
     else:
         return id[0]
+
+
+def downloadBase(type):
+    if type == database.LOCAL:
+        con = sl.connect(dbName)
+        cursor = con.cursor()
+
+    elif type == database.REMOTE:
+        con = mysql.connector.connect(
+            user=config.user_readdonly(),
+            password=config.password_readonly(),
+            host=config.host(),
+            database=config.database(),
+        )
+        cursor = con.cursor(dictionary=True)
+
+    query = "SELECT * FROM atlas"
+
+    cursor.execute(query)
+    data = cursor.fetchall()
+    cursor.close()
+    con.close()
+    return data
