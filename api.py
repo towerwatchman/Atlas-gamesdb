@@ -11,7 +11,7 @@ database_connection = database.REMOTE
 # CreateDatabase(database_connection)
 
 # Serializing json
-json_object = json.dumps(downloadBase(database_connection))
+json_object = json.dumps(downloadBase(database_connection), default=str)
 
 # Writing to sample.json
 with open("sample.json", "w") as outfile:
