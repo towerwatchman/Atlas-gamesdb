@@ -90,9 +90,10 @@ class query:
                     id INTEGER PRIMARY KEY AUTO"""
             + us
             + """INCREMENT,
-                    last_update DATETIME NOT NULL,
                     file_name TINYTEXT NOT NULL,
-                    hash LONGTEXT NOT NULL
+                    type TINYTEXT NOT NULL,
+                    hash LONGTEXT,
+                    last_update DATETIME NOT NULL
                 );
             """
         )

@@ -193,9 +193,10 @@ def findIdByTitle(table, id_name, type):
         return id[0]
 
 
-def downloadBase(type):
+def downloadBase(type, table):
     if type == database.LOCAL:
         con = sl.connect(dbName)
+        con.row_factory = dict_factory
         cursor = con.cursor()
 
     elif type == database.REMOTE:
@@ -207,10 +208,35 @@ def downloadBase(type):
         )
         cursor = con.cursor(dictionary=True)
 
-    query = "SELECT * FROM atlas"
+    query = "SELECT * FROM " + table
 
     cursor.execute(query)
     data = cursor.fetchall()
     cursor.close()
     con.close()
     return data
+
+
+def dict_factory(cursor, row):
+    d = {}
+    for idx, col in enumerate(cursor.description):
+        d[col[0]] = row[idx]
+    return d
+
+
+def InsertUpdate(item, type):
+    if type == database.LOCAL:
+        con = sl.connect(dbName)
+        con.row_factory = dict_factory
+        cursor = con.cursor()
+
+    elif type == database.REMOTE:
+        con = mysql.connector.connect(
+            user=config.user_readdonly(),
+            password=config.password_readonly(),
+            host=config.host(),
+            database=config.database(),
+        )
+        cursor = con.cursor(dictionary=True)
+
+    UpdatetableDynamic("updates", item, type)
