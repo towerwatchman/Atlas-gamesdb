@@ -12,6 +12,9 @@ from threading import Thread
 # import re
 import time
 
+# TEST URL: https://f95zone.to/threads/the-necromancer-arises-prologue-whiteleaf-studio.154250/
+# TEST JSON: https://f95zone.to/sam/latest_alpha/latest_data.php?cmd=list&cat=games&page=1&sort=date&rows=90
+
 
 def baseURL():
     return "https://f95zone.to/forums/games.2/"
@@ -99,11 +102,11 @@ class f95:
                         # print(Titem["title"])
                         try:
                             if atlasRecord["category"] != "README":
-                                # Check if item is in table. If not then get last used id. increment 1 for next id
-                                # print("Updating Record:", counter)
                                 counter += 1
-                                # t = Thread(
-                                #    target=self.updateRecord,
+                                # if include_game_info:
+                                #    self.downloadThreadDetails(
+                                #        self, atlasRecord, f95Record
+                                #    )
                                 self.updateRecord(
                                     f95,
                                     "atlas",
@@ -112,33 +115,7 @@ class f95:
                                     db_type,
                                     thread_id,
                                 )
-                                # ,
-                                # )
-                                # self.updateRecord,
-                                #    args=(
-                                #        f95,
-                                #        "atlas",
-                                #        self.formatDictionary(atlasRecord),
-                                #        self.formatDictionary(f95Record),
-                                #        db_type,
-                                #        thread_id,
-                                #    ),
-                                # )
-                                # t.start()
-                                # threads.append(t)
-                                # thread_id += 1
 
-                                # if include_game_info:
-                                #    TitemDetail = self.downloadThreadDetails(
-                                #        self, f95Record["site_url"]
-                                #    )
-                                # Titem.update(TitemDetail)
-
-                                # UpdatetableDynamic(
-                                #    "f95_zone_data",
-                                #    self.getDataforF95(Titem),
-                                #    db_type,
-                                # )
                         except Exception as ex:
                             print(ex)
                             continue
@@ -161,7 +138,7 @@ class f95:
             except Exception as ex:
                 print(ex)
 
-    def downloadThreadDetails(self, url):
+    def downloadThreadDetails(self, aRecord, fRecord):
         time.sleep(1)  # wait another sec before getting individual page info
         Titem = {
             "banner_url": "",

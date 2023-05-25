@@ -5,3 +5,4 @@ dbCredentials.py
 __pycache__/
 *.db
 *.pyc
+*.json
