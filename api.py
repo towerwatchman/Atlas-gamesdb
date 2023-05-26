@@ -10,24 +10,10 @@ database_connection = database.LOCAL
 createDirectories(database_connection)
 
 # Create Database for Atlas
-CreateDatabase(database_connection)
+# CreateDatabase(database_connection)
 
 # Download data from f95
 # f95.downloadThreadSummary(f95, download.NEW, False, database_connection)
 
 # Package data. if new then create small update
-# packager.createPackage(database_connection)
-
-
-# Serializing json
-# json_object = json.dumps(downloadBase(database_connection), default=str)
-
-# Writing to sample.json
-# with open("base.json", "w") as outfile:
-#    outfile.write(json_object)
-
-
-# Create bin object with latest data
-# data = downloadBase(database_connection)
-# for x in data:
-#    print(x)
+packager.createPackage(database_connection)
