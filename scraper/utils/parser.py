@@ -65,7 +65,7 @@ class parser:
         if len(item) <= 0:
             return ""
         else:
-            return item[0]["datetime"]
+            return (item[0]["datetime"]).replace("T", " ")[:-5]
 
     def ParseRating(element):
         try:
@@ -76,26 +76,34 @@ class parser:
                 .strip()
             )
         except:
-            return ""
+            return 0.0
 
     def ParseViews(element):
         try:
-            return (
-                element.select("div.structItem-cell--meta")[0]
-                .find_all("dl")[1]
-                .select("dd")[0]
-                .text
-            )
+            #init count
+            count = 0    
+            tmp = element.select("div.structItem-cell--meta")[0].find_all("dl")[1].select("dd")[0].text
+            count = re.sub('\D', '', tmp) #remove all chars
+            if "k" in tmp:
+                count = count * 1000
+            if "m" in tmp:
+                count = count * 100000000
+            return count
+           
         except:
-            return ""
+            return 0
 
     def ParseReplies(element):
-        try:
-            return (
-                element.select("div.structItem-cell--meta")[0]
-                .find_all("dl")[0]
-                .select("dd")[0]
-                .text
-            )
+        try:     
+            #init count
+            count = 0       
+            tmp = element.select("div.structItem-cell--meta")[0].find_all("dl")[0].select("dd")[0].text
+            count = re.sub('\D', '', tmp) #remove all chars
+            if "k" in tmp:
+                count = count * 1000
+            if "m" in tmp:
+                count = count * 100000000
+            return count
+            
         except:
-            return ""
+            return 0

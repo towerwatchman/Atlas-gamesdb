@@ -33,7 +33,7 @@ class query:
                     tags LONGTEXT,
                     voice TINYTEXT,
                     os TINYTEXT,
-                    release_date DATE,
+                    release_date DATETIME,
                     length TINYTEXT,
                     banner LONGTEXT,
                     banner_wide LONGTEXT,
@@ -49,7 +49,7 @@ class query:
 
     def createF95Table(type):
         query = """
-                CREATE TABLE IF NOT EXISTS f95_zone_data (
+                CREATE TABLE IF NOT EXISTS f95_zone (
                     f95_id INT NOT NULL UNIQUE PRIMARY KEY,
                     id INT NOT NULL UNIQUE,
                     banner_url LONGTEXT, 
@@ -57,12 +57,12 @@ class query:
                     last_thread_comment DATETIME,
                     thread_publish_date DATETIME,
                     last_record_update DATETIME,
-                    views TINYTEXT,
-                    likes TINYTEXT,
+                    views INT,
+                    likes INT,
                     tags LONGTEXT,
-                    rating TINYTEXT,
+                    rating DOUBLE,
                     screens LONGTEXT,
-                    replies TINYTEXT
+                    replies INT
                 );
             """
         return query

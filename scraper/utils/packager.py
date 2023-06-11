@@ -6,6 +6,7 @@ import datetime
 import json
 import time
 import gzip
+import tarfile
 
 
 class packager:
@@ -18,13 +19,13 @@ class packager:
             folder = "C:/packages"
         if type == database.REMOTE:
             folder = "/var/www/html/packages"
-        # Check if base package exist
-        if not os.path.isfile(os.path.join(folder, "base.update")):
+        # Check if any files exist, if not the make first package
+        if not os.listdir(folder) == []:
             print("Base file does not exist. Running for first time")
             packager.createFile(
                 type,
                 folder,
-                "base.update",
+                str(int(time.time())),
                 "base",
                 packager.createBaseUpdate(type),
                 True,
@@ -38,7 +39,7 @@ class packager:
             packager.createFile(
                 type,
                 folder,
-                str(int(time.time())) + ".json",
+                str(int(time.time())),
                 "daily",
                 packager.createUpdate(type, folder),
                 False,
@@ -49,10 +50,9 @@ class packager:
             folder,
             filenamne,
         )
-        # bin = json.dumps(data, default=str)
         if compress:
             with open(
-                file,
+                file + ".gzip",
                 "wb",
             ) as outfile:
                 outfile.write(
@@ -60,33 +60,24 @@ class packager:
                 )
         else:
             with open(
-                file,
+                file+ ".json",
                 "w",
             ) as outfile:
                 outfile.write(json.dumps(data, default=str))
 
-        InsertUpdate(
-            {
-                "file_name": file,
-                "type": backuptype,
-                "last_update": datetime.datetime.utcnow(),
-            },
-            dbtype,
-        )
-
     def createBaseUpdate(type):
         atlas_object = {"atlas": downloadBase(type, "atlas")}
-        f95_object = {"f95_zone_data": downloadBase(type, "f95_zone_data")}
+        f95_object = {"f95_zone": downloadBase(type, "f95_zone")}
         data = {**atlas_object, **f95_object}
         return data
 
     def createBackup(type, folder):
         atlas_object = downloadBase(type, "atlas")
-        f95_object = downloadBase(type, "f95_zone_data")
+        f95_object = downloadBase(type, "f95_zone")
         packager.createFile(
             type,
             os.path.join(folder, "backup"),
-            "atlas_backup_" + datetime.datetime.today().strftime("%Y%m%d") + ".json",
+            "atlas_backup_" + datetime.datetime.today().strftime("%Y%m%d"),
             "backup",
             atlas_object,
             False,
@@ -94,7 +85,7 @@ class packager:
         packager.createFile(
             type,
             os.path.join(folder, "backup"),
-            "f95_backup_" + datetime.datetime.today().strftime("%Y%m%d") + ".json",
+            "f95_backup_" + datetime.datetime.today().strftime("%Y%m%d"),
             "backup",
             f95_object,
             False,

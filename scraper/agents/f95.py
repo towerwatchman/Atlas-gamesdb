@@ -5,11 +5,11 @@ from datetime import datetime
 from scraper.utils.parser import *
 from scraper.utils.db import *
 from scraper.datatypes.record import *
+from scraper.utils.epoch import *
 from datetime import datetime
 import random
 from threading import Thread
 
-# import re
 import time
 
 # TEST URL: https://f95zone.to/threads/the-necromancer-arises-prologue-whiteleaf-studio.154250/
@@ -38,6 +38,7 @@ class f95:
             return 0
 
     def downloadThreadSummary(self, type, include_game_info, db_type):
+        #need to do a check, if there are 0 total pages then wait. It means they are doing a db backup
         # Start remote connection
         # assign records
         atlasRecord = gameRecord.atlasRecord()
@@ -85,19 +86,20 @@ class f95:
                         ].find_all("a")
                         parser.ParseThreadItem(thread_items, atlasRecord, f95Record)
                         f95Record["thread_publish_date"] = (
+                            epoch.ConvertToUnixTime(
                             element.select("li.structItem-startDate")[0]
                             .find_all("a")[0]
                             .select("time")[0]["datetime"]
-                            .replace("T", " ")[:-5]
+                            .replace("T", " ")[:-5])
                         )
-                        f95Record["last_thread_comment"] = parser.ParseDateTimeItem(
+                        f95Record["last_thread_comment"] =  epoch.ConvertToUnixTime(parser.ParseDateTimeItem(
                             element.select("time.structItem-latestDate")
-                        ).replace("T", " ")[:-5]
-                        f95Record["last_record_update"] = datetime.utcnow()
+                        ))
+                        f95Record["last_record_update"] = int(time.time()) 
                         f95Record["replies"] = parser.ParseReplies(element)
                         f95Record["views"] = parser.ParseViews(element)
                         f95Record["rating"] = parser.ParseRating(element)
-                        atlasRecord["last_db_update"] = datetime.utcnow()
+                        atlasRecord["last_db_update"] = int(time.time()) 
                         # Get details for each thread item
                         # print(Titem["title"])
                         try:
@@ -442,4 +444,4 @@ class f95:
         )
         id = findIdByTitle(table, aRecord["id_name"], db_type)
         fRecord["id"] = id
-        UpdatetableDynamic("f95_zone_data", fRecord, db_type)
+        UpdatetableDynamic("f95_zone", fRecord, db_type)

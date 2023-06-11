@@ -11,9 +11,8 @@ class config:
         return password
 
     def host():
-        # host = "atlas-gamesdb.com"
-        # host = "160.238.36.214"
-        host = "localhost"
+        host = "atlas-gamesdb.com"
+        #host = "localhost"
         return host
 
     def database():
