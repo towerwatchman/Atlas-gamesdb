@@ -20,7 +20,7 @@ class packager:
         if type == database.REMOTE:
             folder = "/var/www/html/packages"
         # Check if any files exist, if not the make first package
-        if not os.listdir(folder) == []:
+        if os.listdir(folder) == []:
             print("Base file does not exist. Running for first time")
             packager.createFile(
                 type,
@@ -42,7 +42,7 @@ class packager:
                 str(int(time.time())),
                 "daily",
                 packager.createUpdate(type, folder),
-                False,
+                True,
             )
 
     def createFile(dbtype, folder, filenamne, backuptype, data, compress=False):
@@ -103,24 +103,25 @@ class packager:
                 )
             )
         )
-        atlas_previous = json.load(
-            open(
-                os.path.join(
-                    folder,
-                    "backup",
-                    "atlas_backup_"
-                    + (datetime.datetime.today() - datetime.timedelta(days=1)).strftime(
-                        "%Y%m%d"
-                    )
-                    + ".json",
-                )
-            )
-        )
+        #atlas_previous = json.load(
+        ##    open(
+         #       os.path.join(
+         #           folder,
+         #           "backup",
+         #           "atlas_backup_"
+         #           + (datetime.datetime.today() - datetime.timedelta(days=1)).strftime(
+         #               "%Y%m%d"
+         #           )
+         #           + ".json",
+         #       )
+         #   )
+        #)
 
-        atlas_diff = DeepDiff(atlas_current, atlas_previous, group_by="id")
+        #atlas_diff = DeepDiff(atlas_current, atlas_previous, group_by="id")
 
         # Write changes to file
-        json_object = json.dumps(atlas_diff, default=str)
+        #json_object = json.dumps(atlas_diff, default=str)
+        json_object = json.dumps(atlas_current, default=str)
 
         return json_object
         # with open(str(int(time.time())) + ".json", "w") as outfile:

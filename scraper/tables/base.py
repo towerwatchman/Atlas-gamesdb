@@ -87,13 +87,9 @@ class query:
         query = (
             """
                 CREATE TABLE IF NOT EXISTS updates (
-                    id INTEGER PRIMARY KEY AUTO"""
-            + us
-            + """INCREMENT,
-                    file_name TINYTEXT NOT NULL,
-                    type TINYTEXT NOT NULL,
-                    hash LONGTEXT,
-                    last_update DATETIME NOT NULL
+                    date DATETIME PRIMARY KEY NOT NULL,
+                    name TINYTEXT NOT NULL,
+                    hash LONGTEXT
                 );
             """
         )
