@@ -4,10 +4,10 @@ from scraper.types.eTypes import *
 from scraper.utils.packager import *
 
 # Set database type: local is pc, remote is server
-database_connection = database.LOCAL
+database_connection = database.REMOTE
 
 # Create folders: local is windows, remote is linux
-createDirectories(database_connection)
+#createDirectories(database_connection)
 
 # Create Database for Atlas
 CreateDatabase(database_connection)
@@ -16,4 +16,4 @@ CreateDatabase(database_connection)
 #f95.downloadThreadSummary(f95, download.NEW, False, database_connection)
 
 # Package data. if new then create small update
-packager.createPackage(database_connection)
+#packager.createPackage(database_connection)

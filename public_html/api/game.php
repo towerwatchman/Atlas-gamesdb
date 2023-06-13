@@ -61,7 +61,7 @@ else{
 
         //print("SELECT * FROM f95_zone_data WHERE id= " .$tmp["id"]);
 
-        $f95 = mysqli_fetch_assoc($query3);
+        $f95 = mysqli_fetch_all($query3);
         
         
         $tmp["f95"] = $f95;

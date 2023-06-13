@@ -223,20 +223,3 @@ def dict_factory(cursor, row):
         d[col[0]] = row[idx]
     return d
 
-
-def InsertUpdate(item, type):
-    if type == database.LOCAL:
-        con = sl.connect(dbName)
-        con.row_factory = dict_factory
-        cursor = con.cursor()
-
-    elif type == database.REMOTE:
-        con = mysql.connector.connect(
-            user=config.user_readdonly(),
-            password=config.password_readonly(),
-            host=config.host(),
-            database=config.database(),
-        )
-        cursor = con.cursor(dictionary=True)
-
-    UpdatetableDynamic("updates", item, type)

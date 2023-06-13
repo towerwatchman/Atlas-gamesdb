@@ -7,6 +7,7 @@ import json
 import time
 import gzip
 import tarfile
+import hashlib
 
 
 class packager:
@@ -41,7 +42,7 @@ class packager:
                 folder,
                 str(int(time.time())),
                 "daily",
-                packager.createUpdate(type, folder),
+                packager.createBaseUpdate(type),
                 True,
             )
 
@@ -58,6 +59,13 @@ class packager:
                 outfile.write(
                     gzip.compress(json.dumps(data, default=str).encode("utf-8"), 9)
                 )
+            #Store each update in the database so we can retrieve a list later
+            item = {
+                "date":datetime.datetime.today().strftime("%Y%m%d"),
+                "name" : filenamne + ".gzip",
+                "hash": hashlib.md5(open(file + ".gzip",'rb').read()).hexdigest() 
+                }            
+            UpdatetableDynamic("updates", item, dbtype)
         else:
             with open(
                 file+ ".json",
