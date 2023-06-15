@@ -48,10 +48,10 @@ class packager:
                 True,
             )
 
-    def createFile(dbtype, folder, filenamne, backuptype, data, compress=False):
+    def createFile(dbtype, folder, filename, backuptype, data, compress=False):
         file = os.path.join(
             folder,
-            filenamne,
+            filename,
         )
         if compress:
             with open(
@@ -63,8 +63,8 @@ class packager:
                 )
             # Store each update in the database so we can retrieve a list later
             item = {
-                "date": int(time.time()),
-                "name": filenamne + ".update",
+                "date": int(filename),
+                "name": filename + ".update",
                 "md5": hashlib.md5(open(file + ".update", "rb").read()).hexdigest(),
             }
             UpdatetableDynamic("updates", item, dbtype)
