@@ -1,6 +1,10 @@
 <?php
 //towerwatchman 3/28/2023
 
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
+
 include 'config.php';
 //Set header type. 
 header('Content-Type: application/json'); 
@@ -57,7 +61,7 @@ else{
         
         //Get f95 data if there is any
 
-        $query3 = mysqli_query($conn, "SELECT * FROM f95_zone_data WHERE id=".$tmp["id"]);
+        $query3 = mysqli_query($conn, "SELECT * FROM f95_zone WHERE id=".$tmp["id"]);
 
         //print("SELECT * FROM f95_zone_data WHERE id= " .$tmp["id"]);
 
