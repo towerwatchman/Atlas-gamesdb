@@ -33,7 +33,7 @@ class query:
                     tags LONGTEXT,
                     voice TINYTEXT,
                     os TINYTEXT,
-                    release_date DATETIME,
+                    release_date BIGINT,
                     length TINYTEXT,
                     banner LONGTEXT,
                     banner_wide LONGTEXT,
@@ -41,7 +41,7 @@ class query:
                     logo LONGTEXT,
                     wallpaper LONGTEXT,
                     previews LONGTEXT,
-                    last_db_update DATETIME
+                    last_db_update BIGINT
                 );
             """
         )
@@ -54,9 +54,9 @@ class query:
                     id INT NOT NULL UNIQUE,
                     banner_url LONGTEXT, 
                     site_url LONGTEXT,
-                    last_thread_comment DATETIME,
-                    thread_publish_date DATETIME,
-                    last_record_update DATETIME,
+                    last_thread_comment BIGINT,
+                    thread_publish_date BIGINT,
+                    last_record_update BIGINT,
                     views INT,
                     likes INT,
                     tags LONGTEXT,
@@ -84,13 +84,11 @@ class query:
         us = ""
         if type == database.REMOTE:
             us = "_"
-        query = (
-            """
+        query = """
                 CREATE TABLE IF NOT EXISTS updates (
                     date BIGINT PRIMARY KEY NOT NULL,
                     name TINYTEXT NOT NULL,
                     md5 LONGTEXT
                 );
             """
-        )
         return query
