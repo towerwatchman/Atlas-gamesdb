@@ -87,9 +87,9 @@ class query:
         query = (
             """
                 CREATE TABLE IF NOT EXISTS updates (
-                    date DATETIME PRIMARY KEY NOT NULL,
+                    date BIGINT PRIMARY KEY NOT NULL,
                     name TINYTEXT NOT NULL,
-                    hash LONGTEXT
+                    md5 LONGTEXT
                 );
             """
         )

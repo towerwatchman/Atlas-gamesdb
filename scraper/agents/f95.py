@@ -105,10 +105,23 @@ class f95:
                         try:
                             if atlasRecord["category"] != "README":
                                 counter += 1
-                                # if include_game_info:
-                                #    self.downloadThreadDetails(
-                                #        self, atlasRecord, f95Record
-                                #    )
+                                if include_game_info:
+                                   print("getting details for id:" + f95Record["f95_id"])
+                                   Titem =  self.downloadThreadDetails(
+                                       self, atlasRecord, f95Record
+                                    )
+                                   f95Record["banner_url"] = Titem["banner_url"]
+                                   atlasRecord["overview"] = Titem["overview"]
+                                   atlasRecord["release_date"] = Titem["release_date"]
+                                   atlasRecord["censored"] = Titem["censored"]
+                                   atlasRecord["language"] = Titem["language"]
+                                   atlasRecord["translations"] = Titem["translations"]
+                                   atlasRecord["length"] = Titem["length"]
+                                   #Titem["vndb"] = Titem["vndb"]
+                                   atlasRecord["voice"] = Titem["voice"]
+                                   atlasRecord["os"] = Titem["os"]
+                                   f95Record["tags"] = Titem["tags"]
+                                   f95Record["screens"] = Titem["screens"]
                                 self.updateRecord(
                                     f95,
                                     "atlas",
@@ -158,7 +171,7 @@ class f95:
             "likes": "",
         }
 
-        site_url = url
+        site_url = fRecord["site_url"]
         banner_url = ""
         overview = ""
         release_date = ""

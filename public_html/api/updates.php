@@ -17,7 +17,7 @@ else{
     while($row = $query->fetch_assoc()) {
         $result[] = $row;
     }
-    $json = json_encode($result);
+    $json = json_encode($result, JSON_NUMERIC_CHECK );
     mysqli_close($conn);
     print($json);
 }

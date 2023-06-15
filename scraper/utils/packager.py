@@ -61,9 +61,9 @@ class packager:
                 )
             #Store each update in the database so we can retrieve a list later
             item = {
-                "date":datetime.datetime.today().strftime("%Y%m%d"),
+                "date" : int(time.time()),
                 "name" : filenamne + ".gzip",
-                "hash": hashlib.md5(open(file + ".gzip",'rb').read()).hexdigest() 
+                "md5": hashlib.md5(open(file + ".gzip",'rb').read()).hexdigest() 
                 }            
             UpdatetableDynamic("updates", item, dbtype)
         else:
