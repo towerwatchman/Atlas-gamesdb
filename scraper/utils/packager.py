@@ -5,9 +5,11 @@ from scraper.utils.db import *
 import datetime
 import json
 import time
-import gzip
+
+# import gzip
 import tarfile
 import hashlib
+import zlib
 
 
 class packager:
@@ -53,22 +55,22 @@ class packager:
         )
         if compress:
             with open(
-                file + ".gzip",
+                file + ".update",
                 "wb",
             ) as outfile:
                 outfile.write(
-                    gzip.compress(json.dumps(data, default=str).encode("utf-8"), 9)
+                    zlib.compress(json.dumps(data, default=str).encode("utf-8"), 9)
                 )
-            #Store each update in the database so we can retrieve a list later
+            # Store each update in the database so we can retrieve a list later
             item = {
-                "date" : int(time.time()),
-                "name" : filenamne + ".gzip",
-                "md5": hashlib.md5(open(file + ".gzip",'rb').read()).hexdigest() 
-                }            
+                "date": int(time.time()),
+                "name": filenamne + ".update",
+                "md5": hashlib.md5(open(file + ".update", "rb").read()).hexdigest(),
+            }
             UpdatetableDynamic("updates", item, dbtype)
         else:
             with open(
-                file+ ".json",
+                file + ".json",
                 "w",
             ) as outfile:
                 outfile.write(json.dumps(data, default=str))
@@ -111,24 +113,24 @@ class packager:
                 )
             )
         )
-        #atlas_previous = json.load(
+        # atlas_previous = json.load(
         ##    open(
-         #       os.path.join(
-         #           folder,
-         #           "backup",
-         #           "atlas_backup_"
-         #           + (datetime.datetime.today() - datetime.timedelta(days=1)).strftime(
-         #               "%Y%m%d"
-         #           )
-         #           + ".json",
-         #       )
-         #   )
-        #)
+        #       os.path.join(
+        #           folder,
+        #           "backup",
+        #           "atlas_backup_"
+        #           + (datetime.datetime.today() - datetime.timedelta(days=1)).strftime(
+        #               "%Y%m%d"
+        #           )
+        #           + ".json",
+        #       )
+        #   )
+        # )
 
-        #atlas_diff = DeepDiff(atlas_current, atlas_previous, group_by="id")
+        # atlas_diff = DeepDiff(atlas_current, atlas_previous, group_by="id")
 
         # Write changes to file
-        #json_object = json.dumps(atlas_diff, default=str)
+        # json_object = json.dumps(atlas_diff, default=str)
         json_object = json.dumps(atlas_current, default=str)
 
         return json_object
