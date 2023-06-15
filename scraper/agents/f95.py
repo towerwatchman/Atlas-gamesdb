@@ -38,7 +38,7 @@ class f95:
             return 0
 
     def downloadThreadSummary(self, type, include_game_info, db_type):
-        #need to do a check, if there are 0 total pages then wait. It means they are doing a db backup
+        # need to do a check, if there are 0 total pages then wait. It means they are doing a db backup
         # Start remote connection
         # assign records
         atlasRecord = gameRecord.atlasRecord()
@@ -85,43 +85,46 @@ class f95:
                             0
                         ].find_all("a")
                         parser.ParseThreadItem(thread_items, atlasRecord, f95Record)
-                        f95Record["thread_publish_date"] = (
-                            epoch.ConvertToUnixTime(
+                        f95Record["thread_publish_date"] = epoch.ConvertToUnixTime(
                             element.select("li.structItem-startDate")[0]
                             .find_all("a")[0]
                             .select("time")[0]["datetime"]
-                            .replace("T", " ")[:-5])
+                            .replace("T", " ")[:-5]
                         )
-                        f95Record["last_thread_comment"] =  epoch.ConvertToUnixTime(parser.ParseDateTimeItem(
-                            element.select("time.structItem-latestDate")
-                        ))
-                        f95Record["last_record_update"] = int(time.time()) 
+                        f95Record["last_thread_comment"] = epoch.ConvertToUnixTime(
+                            parser.ParseDateTimeItem(
+                                element.select("time.structItem-latestDate")
+                            )
+                        )
+                        f95Record["last_record_update"] = int(time.time())
                         f95Record["replies"] = parser.ParseReplies(element)
                         f95Record["views"] = parser.ParseViews(element)
                         f95Record["rating"] = parser.ParseRating(element)
-                        atlasRecord["last_db_update"] = int(time.time()) 
+                        atlasRecord["last_db_update"] = int(time.time())
                         # Get details for each thread item
                         # print(Titem["title"])
                         try:
                             if atlasRecord["category"] != "README":
                                 counter += 1
                                 if include_game_info:
-                                   print("getting details for id:" + f95Record["f95_id"])
-                                   Titem =  self.downloadThreadDetails(
-                                       self, atlasRecord, f95Record
+                                    print(
+                                        "getting details for id:" + f95Record["f95_id"]
                                     )
-                                   f95Record["banner_url"] = Titem["banner_url"]
-                                   atlasRecord["overview"] = Titem["overview"]
-                                   atlasRecord["release_date"] = Titem["release_date"]
-                                   atlasRecord["censored"] = Titem["censored"]
-                                   atlasRecord["language"] = Titem["language"]
-                                   atlasRecord["translations"] = Titem["translations"]
-                                   atlasRecord["length"] = Titem["length"]
-                                   #Titem["vndb"] = Titem["vndb"]
-                                   atlasRecord["voice"] = Titem["voice"]
-                                   atlasRecord["os"] = Titem["os"]
-                                   f95Record["tags"] = Titem["tags"]
-                                   f95Record["screens"] = Titem["screens"]
+                                    Titem = self.downloadThreadDetails(
+                                        self, atlasRecord, f95Record
+                                    )
+                                    f95Record["banner_url"] = Titem["banner_url"]
+                                    atlasRecord["overview"] = Titem["overview"]
+                                    atlasRecord["release_date"] = Titem["release_date"]
+                                    atlasRecord["censored"] = Titem["censored"]
+                                    atlasRecord["language"] = Titem["language"]
+                                    atlasRecord["translations"] = Titem["translations"]
+                                    atlasRecord["length"] = Titem["length"]
+                                    # Titem["vndb"] = Titem["vndb"]
+                                    atlasRecord["voice"] = Titem["voice"]
+                                    atlasRecord["os"] = Titem["os"]
+                                    f95Record["tags"] = Titem["tags"]
+                                    f95Record["screens"] = Titem["screens"]
                                 self.updateRecord(
                                     f95,
                                     "atlas",
@@ -409,7 +412,7 @@ class f95:
             # Store data in dict and return dict
             Titem["banner_url"] = banner_url
             Titem["overview"] = overview
-            Titem["release_date"] = release_date
+            Titem["release_date"] = epoch.ConvertToUnixTime(release_date)
             Titem["censored"] = censored
             Titem["language"] = language
             Titem["translations"] = translations
