@@ -10,6 +10,7 @@ import time
 import tarfile
 import hashlib
 import zlib
+import lz4.frame
 
 
 class packager:
@@ -59,7 +60,8 @@ class packager:
                 "wb",
             ) as outfile:
                 outfile.write(
-                    zlib.compress(json.dumps(data, default=str).encode("utf-8"), 9)
+                    lz4.frame.compress(json.dumps(data, default=str).encode("utf-8"))
+                    #zlib.compress(json.dumps(data, default=str).encode("utf-8"), 9)
                 )
             # Store each update in the database so we can retrieve a list later
             item = {

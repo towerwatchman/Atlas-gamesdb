@@ -13,7 +13,7 @@ createDirectories(database_connection)
 CreateDatabase(database_connection)
 
 # Download data from f95
-f95.downloadThreadSummary(f95, download.NEW, True, database_connection)
+#f95.downloadThreadSummary(f95, download.NEW, True, database_connection)
 
 # Package data. if new then create small update
 packager.createPackage(database_connection)
