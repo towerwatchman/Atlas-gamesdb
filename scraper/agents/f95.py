@@ -9,6 +9,7 @@ from scraper.utils.epoch import *
 from datetime import datetime
 import random
 from threading import Thread
+import sys
 
 import time
 
@@ -101,7 +102,7 @@ class f95:
                         f95Record["views"] = parser.ParseViews(element)
                         f95Record["rating"] = parser.ParseRating(element)
                         atlasRecord["last_db_update"] = int(time.time())
-                        # Get details for each thread item
+                        # Get details for each thread item. Skip if part of README section
                         # print(Titem["title"])
                         try:
                             if atlasRecord["category"] != "README":
@@ -142,6 +143,7 @@ class f95:
                         # print(last_thread_update ,">", last_db_update)
                         # if last_thread_update >last_db_update:
                         # print(Titem)
+                    # sys.exit()
 
                     # print(Titem.keys())
                     if not include_game_info:
@@ -254,6 +256,7 @@ class f95:
 
                 try:
                     banner_url = gsoup.find_all("img", class_="bbImage")[0]["src"]
+                    banner_url = banner_url.replace("/thumb/", "/")
                 except:
                     banner_url = ""
 
