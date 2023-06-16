@@ -412,6 +412,7 @@ class f95:
             # Store data in dict and return dict
             Titem["banner_url"] = banner_url
             Titem["overview"] = overview
+            # print(epoch.ConvertToUnixTime(release_date))
             Titem["release_date"] = epoch.ConvertToUnixTime(release_date)
             Titem["censored"] = censored
             Titem["language"] = language
