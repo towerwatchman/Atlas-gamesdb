@@ -70,7 +70,7 @@ else{
         $tmp["f95"] = $f95;
         
         
-        $games = json_encode($tmp);
+        $games = json_encode($tmp, JSON_NUMERIC_CHECK);
         //print($f95);
         $status = 200;
 
