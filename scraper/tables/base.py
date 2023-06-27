@@ -12,7 +12,7 @@ class query:
         query = (
             """
                CREATE TABLE IF NOT EXISTS atlas (
-                    id INTEGER PRIMARY KEY AUTO"""
+                    atlas_id INTEGER PRIMARY KEY AUTO"""
             + us
             + """INCREMENT,
                     id_name LONGTEXT NOT NULL UNIQUE,
@@ -51,7 +51,7 @@ class query:
         query = """
                 CREATE TABLE IF NOT EXISTS f95_zone (
                     f95_id INT NOT NULL UNIQUE PRIMARY KEY,
-                    id INT NOT NULL UNIQUE,
+                    atlas_id INT NOT NULL UNIQUE,
                     banner_url LONGTEXT, 
                     site_url LONGTEXT,
                     last_thread_comment BIGINT,
@@ -62,7 +62,8 @@ class query:
                     tags LONGTEXT,
                     rating DOUBLE,
                     screens LONGTEXT,
-                    replies INT
+                    replies INT,
+                    FOREIGN KEY (atlas_id) REFERENCES atlas(atlas_id)
                 );
             """
         return query

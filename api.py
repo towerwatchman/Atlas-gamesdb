@@ -8,8 +8,10 @@ from scraper.utils.packager import *
 # Will need to change eventually to check db type as well. This will be a function
 if platform == "win32":
     database_connection = database.LOCAL
+    print("Running Local")
 else:
     database_connection = database.REMOTE
+    print("Running Remote")
 
 # Create folders: local is windows, remote is linux
 createDirectories(database_connection)
@@ -19,7 +21,7 @@ CreateDatabase(database_connection)
 
 # Download from sources
 # F95 : 1st Source
-f95.downloadThreadSummary(f95, download.NEW, True, database_connection)
+#f95.downloadThreadSummary(f95, download.NEW, True, database_connection)
 
 # Package data based on date. As of right now it will output a full db dump.
-packager.createPackage(database_connection)
+#packager.createPackage(database_connection)

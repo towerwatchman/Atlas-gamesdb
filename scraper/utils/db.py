@@ -84,7 +84,7 @@ def CreateDatabase(type):
             print("Local Database Exist")
         con = sl.connect(dbName)
         with con:
-            con.execute(query.createIdSequence(database.LOCAL))
+            #con.execute(query.createIdSequence(database.LOCAL))
             con.execute(query.createAtlasTable(database.LOCAL))
             con.execute(query.createF95Table(database.LOCAL))
             con.execute(query.createUpdateTable(database.LOCAL))
@@ -100,7 +100,7 @@ def CreateDatabase(type):
         print("Creating Remote Database")
         con = cnx.cursor()
         with con:
-            con.execute(query.createIdSequence(database.REMOTE))
+            #con.execute(query.createIdSequence(database.REMOTE))
             con.execute(query.createAtlasTable(database.REMOTE))
             con.execute(query.createF95Table(database.REMOTE))
             con.execute(query.createUpdateTable(database.REMOTE))
