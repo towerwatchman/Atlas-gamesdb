@@ -208,7 +208,7 @@ def downloadBase(type, table):
         )
         cursor = con.cursor(dictionary=True)
 
-    query = "SELECT * FROM " + table + " ORDER BY id"
+    query = "SELECT * FROM " + table + " ORDER BY atlas_id"
 
     cursor.execute(query)
     data = cursor.fetchall()
