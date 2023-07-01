@@ -80,7 +80,8 @@ class packager:
     def createBaseUpdate(type):
         atlas_object = {"atlas": downloadBase(type, "atlas")}
         f95_object = {"f95_zone": downloadBase(type, "f95_zone")}
-        data = {**atlas_object, **f95_object}
+        min_ver = {"min_ver": "0.0.0"}
+        data = {**atlas_object, **f95_object, **min_ver}
         return data
 
     def createBackup(type, folder):

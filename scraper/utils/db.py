@@ -182,7 +182,7 @@ def findIdByTitle(table, id_name, type):
         )
         cursor = con.cursor(prepared=True)
 
-    query = "SELECT id FROM " + table + ' WHERE id_name = "' + id_name + '"'
+    query = "SELECT atlas_id FROM " + table + ' WHERE id_name = "' + id_name + '"'
 
     cursor.execute(query)
     id = cursor.fetchone()

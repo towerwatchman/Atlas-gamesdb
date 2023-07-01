@@ -456,12 +456,15 @@ class f95:
 
     def updateRecord(self, table, aRecord, fRecord, db_type, thread_id):
         UpdatetableDynamic(table, aRecord, db_type)
+        #print(aRecord)
+        id = findIdByTitle(table, aRecord["id_name"], db_type)
+        #print(id)
+        fRecord["atlas_id"] = id
+        #print(fRecord)
+        UpdatetableDynamic("f95_zone", fRecord, db_type)
         print(
             "Database update completed for f95_id:",
             fRecord["f95_id"],
             " on thread:",
             thread_id,
         )
-        id = findIdByTitle(table, aRecord["id_name"], db_type)
-        fRecord["id"] = id
-        UpdatetableDynamic("f95_zone", fRecord, db_type)

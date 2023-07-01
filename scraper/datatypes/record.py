@@ -8,7 +8,7 @@ class gameRecord:
 
     def atlasRecord():
         Titem = {
-            "id": "",
+            "atlas_id": "",
             "id_name": "",
             "short_name": "",
             "title": "",
@@ -41,7 +41,7 @@ class gameRecord:
 
     def f95Record():
         Titem = {
-            "id": "",
+            "atlas_id": "",
             "f95_id": "",
         }
         return Titem
