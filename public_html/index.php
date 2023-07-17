@@ -98,10 +98,23 @@
             </div>
         
 <div class="container p-t-md">
-    
-<div class="pagination-wrapper">
-    <ul class="pagination-lg pagination"><li class="first disabled"><a href="#">First</a></li><li class="prev disabled"><a href="#">Previous</a></li><li class="page active"><a href="#">1</a></li><li class="page"><a href="#">2</a></li><li class="next"><a href="#">Next</a></li><li class="last"><a href="#">Last</a></li></ul>
-</div>
+
+<?php
+print(" <div class=\"pagination-wrapper\">
+            <ul class=\"pagination-lg pagination\">
+                <li class=\"first disabled\">
+                    <a href=\"#\">First</a>
+                </li>
+                <li class=\"prev disabled\">
+                    <a href=\"#\">Previous</a></li><li class=\"page active\">
+                    <a href=\"#\">1</a></li><li class=\"page\">
+                    <a href=\"#\">2</a></li><li class=\"next\">
+                    <a href=\"#\">Next</a></li><li class=\"last\">
+                    <a href=\"#\">Last</a>
+                </li>
+            </ul>
+        </div>");
+?>
 
 <?php
     include 'api/config.php';
@@ -130,11 +143,11 @@
             
             //print($item[1]);
 
+                /*<div class=\"col-sm-2\">
+                    <img class=\"img-responsive\" src=" . $banner_url . " alt=" . $title . ">
+                </div>*/
            print(" <a class=\"list-item\" href=\"/platforms/games/1-3do-interactive-multiplayer\">
                 <div class=\"row\">
-                    <div class=\"col-sm-2\">
-                            <img class=\"img-responsive\" src=" . $banner_url . " alt=" . $title . ">
-                    </div>
                     <div class=\"col-sm-10\">
                         <h3>" . $title . "</h3>
                         <h4> Developer: ".$creator. "</h4>
@@ -159,9 +172,10 @@
     <script>
 
     $(".pagination-lg").twbsPagination({
+
         startPage: 1,
-        totalPages: 2,
-        visiblePages: 15,
+        totalPages: 20,
+        visiblePages: 5,
         initiateStartPageClick: false,
         last: "Last (" + 2 + ")",
         onPageClick: function (event, page) {
