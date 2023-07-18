@@ -93,3 +93,17 @@ class query:
                 );
             """
         return query
+
+    def createDlsiteCircleTable(type):
+        us = ""
+        if type == database.REMOTE:
+            us = "_"
+        query = """
+                CREATE TABLE IF NOT EXISTS dlsite_circle (
+                    id TINYTEXT PRIMARY KEY NOT NULL,
+                    name TINYTEXT NOT NULL,
+                    url LONGTEXT NOT NULL,
+                    img LONGTEST NOT NULL
+                );
+            """
+        return query

@@ -84,10 +84,11 @@ def CreateDatabase(type):
             print("Local Database Exist")
         con = sl.connect(dbName)
         with con:
-            #con.execute(query.createIdSequence(database.LOCAL))
+            # con.execute(query.createIdSequence(database.LOCAL))
             con.execute(query.createAtlasTable(database.LOCAL))
             con.execute(query.createF95Table(database.LOCAL))
             con.execute(query.createUpdateTable(database.LOCAL))
+            con.execute(query.createDlsiteCircleTable(database.LOCAL))
         con.close()
     # Remote
     elif type == database.REMOTE:
@@ -100,10 +101,11 @@ def CreateDatabase(type):
         print("Creating Remote Database")
         con = cnx.cursor()
         with con:
-            #con.execute(query.createIdSequence(database.REMOTE))
+            # con.execute(query.createIdSequence(database.REMOTE))
             con.execute(query.createAtlasTable(database.REMOTE))
             con.execute(query.createF95Table(database.REMOTE))
             con.execute(query.createUpdateTable(database.REMOTE))
+            con.execute(query.createDlsiteCircleTable(database.REMOTE))
         con.close()
 
 
@@ -222,4 +224,3 @@ def dict_factory(cursor, row):
     for idx, col in enumerate(cursor.description):
         d[col[0]] = row[idx]
     return d
-
