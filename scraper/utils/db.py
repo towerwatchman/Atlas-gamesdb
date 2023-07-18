@@ -89,6 +89,7 @@ def CreateDatabase(type):
             con.execute(query.createF95Table(database.LOCAL))
             con.execute(query.createUpdateTable(database.LOCAL))
             con.execute(query.createDlsiteCircleTable(database.LOCAL))
+            con.execute(query.createDlsiteTable(database.LOCAL))
         con.close()
     # Remote
     elif type == database.REMOTE:
@@ -106,6 +107,7 @@ def CreateDatabase(type):
             con.execute(query.createF95Table(database.REMOTE))
             con.execute(query.createUpdateTable(database.REMOTE))
             con.execute(query.createDlsiteCircleTable(database.REMOTE))
+            con.execute(query.createDlsiteTable(database.REMOTE))
         con.close()
 
 

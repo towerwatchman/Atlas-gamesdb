@@ -21,7 +21,6 @@ class dlsite:
         pass
 
     def updateCircleID(db_type):
-        
         baseURL = "https://www.dlsite.com/maniax/circle/list/=/name_header/"
         circle_list = [
             "A",
@@ -50,6 +49,52 @@ class dlsite:
             "X",
             "Y",
             "Z",
+            "あ",
+            "い",
+            "う",
+            "え",
+            "お",
+            "か",
+            "き",
+            "く",
+            "け",
+            "こ",
+            "さ",
+            "し",
+            "す",
+            "せ",
+            "そ",
+            "た",
+            "ち",
+            "つ",
+            "て",
+            "と",
+            "な",
+            "に",
+            "ぬ",
+            "ね",
+            "の",
+            "は",
+            "ひ",
+            "ふ",
+            "へ",
+            "ほ",
+            "ま",
+            "み",
+            "む",
+            "め",
+            "も",
+            "や",
+            "ゆ",
+            "よ",
+            "ら",
+            "り",
+            "る",
+            "れ",
+            "ろ",
+            "わ",
+            "を",
+            "ん"
         ]
 
         tmp = {}
@@ -86,4 +131,10 @@ class dlsite:
                 print("ERROR")
 
     def getAllGamesHtml(db_type):
-        #https://www.dlsite.com/pro/fsr/=/language/en/sex_category[0]/male/work_category[0]/pc/order/release/options_and_or/and/per_page/100/lang_options[0]/Japanese/lang_options[1]/English/lang_options[2]/Alingual/show_type/1
+        print("test")
+        # https://www.dlsite.com/pro/fsr/=/language/en/sex_category[0]/male/work_category[0]/pc/order/release/options_and_or/and/per_page/100/lang_options[0]/Japanese/lang_options[1]/English/lang_options[2]/Alingual/show_type/1
+
+    def getJSONgame(db_type):
+        base_url = "https://www.dlsite.com/pro/product/info/ajax?product_id=VJ"
+
+        print("Test")
