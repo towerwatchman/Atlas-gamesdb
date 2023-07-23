@@ -2,6 +2,9 @@ import requests
 from urllib.request import urlopen
 from bs4 import BeautifulSoup
 from scraper.utils.db import *
+import json
+import time
+import re
 
 # Sample url
 # https://www.dlsite.com/pro/work/=/product_id/VJ01000221.html
@@ -19,6 +22,11 @@ from scraper.utils.db import *
 class dlsite:
     def __init__(self) -> None:
         pass
+
+    def getIDs(type, db_type):
+        baseURL = "https://www.dlsite.com/pro/product/info/ajax?product_id=" + type
+
+        starting_id = 1000
 
     def updateCircleID(db_type):
         baseURL = "https://www.dlsite.com/maniax/circle/list/=/name_header/"
@@ -94,7 +102,7 @@ class dlsite:
             "ろ",
             "わ",
             "を",
-            "ん"
+            "ん",
         ]
 
         tmp = {}
@@ -136,5 +144,44 @@ class dlsite:
 
     def getJSONgame(db_type):
         base_url = "https://www.dlsite.com/pro/product/info/ajax?product_id=VJ"
+        dlsite_id = "000000"
 
-        print("Test")
+        atlasRecord = {}
+        for x in range(1001, 20000):
+            # Format string
+            if len(str(x)) == 4:
+                dlsite_id = "00" + str(x)
+            if len(str(x)) == 5:
+                dlsite_id = "0" + str(x)
+
+            print(base_url + dlsite_id)
+            request = requests.get(base_url + dlsite_id)
+            if request.status_code == 200:
+                page = json.loads(request.text)
+                atlasRecord["creator"] = findDlsiteMaker(
+                    "dlsite_circle", page["VJ" + dlsite_id]["maker_id"], db_type
+                )
+                atlasRecord["site_url"] = page["VJ" + dlsite_id]["down_url"]
+                atlasRecord["title"] = page["VJ" + dlsite_id]["work_name"]
+                atlasRecord["banner_url"] = page["VJ" + dlsite_id]["work_image"]
+                work_type = page["VJ" + dlsite_id]["work_type"]
+                regist_date = page["VJ" + dlsite_id]["regist_date"]
+
+            print(page["VJ" + dlsite_id]["maker_id"])
+            print(atlasRecord)
+            time.sleep(100)
+
+    def updateRecord(self, table, aRecord, dRecord, db_type, thread_id):
+        UpdatetableDynamic(table, aRecord, db_type)
+        # print(aRecord)
+        id = findIdByTitle(table, aRecord["id_name"], db_type)
+        # print(id)
+        dRecord["atlas_id"] = id
+        # print(fRecord)
+        UpdatetableDynamic("f95_zone", dRecord, db_type)
+        print(
+            "Database update completed for f95_id:",
+            dRecord["f95_id"],
+            " on thread:",
+            thread_id,
+        )

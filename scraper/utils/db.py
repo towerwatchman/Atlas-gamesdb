@@ -197,6 +197,32 @@ def findIdByTitle(table, id_name, type):
         return id[0]
 
 
+def findDlsiteMaker(table, id, type):
+    if type == database.LOCAL:
+        con = sl.connect(dbName)
+        con.row_factory = sl.Row
+        cursor = con.cursor()
+
+    elif type == database.REMOTE:
+        con = mysql.connector.connect(
+            user=config.user_readdonly(),
+            password=config.password_readonly(),
+            host=config.host(),
+            database=config.database(),
+        )
+        cursor = con.cursor(prepared=True)
+
+    query = "SELECT name FROM " + table + ' WHERE id = "' + id + '"'
+
+    cursor.execute(query)
+    id = cursor.fetchone()
+    # cursor.close()
+    if id == None:
+        return 0
+    else:
+        return id[0]
+
+
 def downloadBase(type, table):
     if type == database.LOCAL:
         con = sl.connect(dbName)
