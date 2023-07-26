@@ -61,7 +61,7 @@ h1 {
     margin-bottom: 15px;
     padding: 15px;
     transition: all 0.5s;
-    height: 170px !important;
+    /*height: 170px !important;*/
 }
 
 .list-item h3 {
