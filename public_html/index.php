@@ -1,5 +1,8 @@
 <!DOCTYPE html>
 
+<?php
+
+?>
 <html>
 
 <head>
@@ -132,7 +135,12 @@
                 $title =  str_replace("'", '', $item[1]);
                 $creator = $item[2];
                 $engine = $item[3];
-                $banner_url = $item[4];
+                //$banner_url = $item[4];
+                if ($show_images) {
+                    $banner_url = "src=";
+                } else {
+                    $banner_url = "";
+                }
                 $overview = $item[5];
 
                 //print($item[1]);
@@ -141,7 +149,10 @@
                     <img class=\"img-responsive\" src=" . $banner_url . " alt=" . $title . ">
                 </div>*/
                 print(" <a class=\"list-item\" href=\"/games/details?id=" . $atlas_id . "\">
-                <div class=\"row\">                   
+                <div class=\"row\">       
+                <div class=\"col-sm-2\">
+                    <img class=\"img-responsive\" " . $banner_url . " alt=" . $title . ">
+                </div>            
                     <div class=\"col-sm-10\">
                         <h3>" . $title . "</h3>
                         <h5> Developer: " . $creator . "</h5> 

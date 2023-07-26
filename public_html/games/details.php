@@ -27,9 +27,12 @@ if (isset($_GET["id"])) {
         $status = 400;
     } else {
         //print($id);
-        $query = mysqli_query($conn, "SELECT * FROM `atlas` WHERE atlas.atlas_id =  '" . $id . " '");
+        $query = mysqli_query($conn, "SELECT * FROM `atlas` WHERE atlas_id =  '" . $id . " '");
+        //$f95query = mysqli_query($conn, "SELECT * FROM `f95_zone_data` WHERE atlas_id =  '" . $id . " '");
 
         $data = mysqli_fetch_all($query);
+        $atlas_fields = mysqli_fetch_assoc($query);
+        //$f95_data = mysqli_fetch_all($query);
         $columns = array();
         if (!empty($data)) {
             $columns = array_keys($data[0]);
@@ -37,13 +40,14 @@ if (isset($_GET["id"])) {
 
         $title =  str_replace("'", '', $data[0][3]);
         $overview = $data[0][11];
+        print_r($atlas_fields);
     }
     /*<img class="header-art" src="https://images.launchbox-app.com/1cd45aa5-79d6-44a3-86a9-65ea92662f98.jpg" alt="20th Century Video Almanac">*/
     echo ("<div class=\"profile-header text-center\">
         <div class=\"container\">
         <div class=\"container-inner\">");
     echo ("<h3 class=\"profile-header-user\">" . $title . "</h3>");
-    echo ("<p class=\"profile-header-bio\" style=\"margin-top: 20px;\">" . $overview . "</p>");
+    echo ("<p class=\"profile-header-bio\" style=\"margin-top: 20px;\"></p>");
     echo ("</div></div>");
 
     ?>
