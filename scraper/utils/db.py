@@ -108,6 +108,7 @@ def CreateDatabase(type):
             con.execute(query.createUpdateTable(database.REMOTE))
             con.execute(query.createDlsiteCircleTable(database.REMOTE))
             con.execute(query.createDlsiteTable(database.REMOTE))
+
         con.close()
 
 
