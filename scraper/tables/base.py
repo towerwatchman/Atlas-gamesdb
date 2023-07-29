@@ -118,3 +118,39 @@ class query:
             );
         """
         return query
+
+    def createLewdcornereTable(type):
+        query = """
+            CREATE TABLE IF NOT EXISTS lewdcorner (
+                lc_id INT NOT NULL UNIQUE PRIMARY KEY,
+                atlas_id INT NOT NULL UNIQUE,
+                banner_url LONGTEXT, 
+                site_url LONGTEXT,
+                register_date BIGINT,
+                views INT,
+                likes INT,
+                tags LONGTEXT,
+                rating DOUBLE,
+                screens LONGTEXT,
+                FOREIGN KEY (atlas_id) REFERENCES atlas(atlas_id)              
+            );
+        """
+        return query
+    
+    def createSxsTable(type):
+        query = """
+            CREATE TABLE IF NOT EXISTS sxs (
+                sxs_id INT NOT NULL UNIQUE PRIMARY KEY,
+                atlas_id INT NOT NULL UNIQUE,
+                banner_url LONGTEXT, 
+                site_url LONGTEXT,
+                register_date BIGINT,
+                views INT,
+                likes INT,
+                tags LONGTEXT,
+                rating DOUBLE,
+                screens LONGTEXT,
+                FOREIGN KEY (atlas_id) REFERENCES atlas(atlas_id)              
+            );
+        """
+        return query

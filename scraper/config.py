@@ -16,5 +16,5 @@ class config:
         return host
 
     def database():
-        database = "games_test"
+        database = "games"
         return database

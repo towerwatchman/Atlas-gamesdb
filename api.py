@@ -8,12 +8,15 @@ from scraper.agents.dlsite import *
 
 # Set database type: local is pc (Windows), remote is server (Linux)
 # Will need to change eventually to check db type as well. This will be a function
-
-database_connection = database.REMOTE
-print("Running Remote")
+if platform == "win32":
+    database_connection = database.LOCAL
+    print("Running Local")
+else:
+    database_connection = database.REMOTE
+    print("Running Remote")
 
 # Create folders: local is windows, remote is linux
-#createDirectories(database_connection)
+createDirectories(database_connection)
 
 # Create Database for Atlas: db will create based on sytem
 CreateDatabase(database_connection)
