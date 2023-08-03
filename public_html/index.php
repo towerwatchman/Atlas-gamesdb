@@ -1,29 +1,13 @@
 <!DOCTYPE html>
-
-<?php
-
-?>
 <html>
 
-<head>
-    <meta charset="utf-8">
-    <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Atlas Games Database</title>
-
-    <link rel="stylesheet" type="text/css" href="css/toolkit.min.css">
-    <link rel="stylesheet" type="text/css" href="css/theme.css">
-    <link rel="stylesheet" type="text/css" href="css/main.css">
-
-
-    <link href="https://maxcdn.bootstrapcdn.com/font-awesome/4.5.0/css/font-awesome.min.css" rel="stylesheet">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/tooltipster/3.3.0/css/tooltipster.min.css" rel="stylesheet">
-    <link href="Resources/Styles/jquery.mCustomScrollbar.min.css" rel="stylesheet">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap-datepicker/1.6.0/css/bootstrap-datepicker.min.css" rel="stylesheet">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.2/css/select2.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Open+Sans:400italic,700italic,400,700&amp;subset=latin,latin-ext" type="text/css" media="all">
-</head>
-<link href="Resources/Styles/ekko-lightbox.min.css" rel="stylesheet">
+<?php
+include 'page/head.php';
+$show_images = false;
+if (isset($_GET["show_images"])) {
+    $show_images = trim($_GET["show_images"]);
+}
+?>
 
 <body>
     <nav class="navbar navbar-fixed-top">
@@ -136,8 +120,9 @@
                 $creator = $item[2];
                 $engine = $item[3];
                 //$banner_url = $item[4];
-                if ($show_images) {
-                    $banner_url = "src=";
+
+                if ($show_images == true) {
+                    $banner_url = "<img class=\"img-responsive\" src=" . $item[4] . " alt=" . $title . ">";
                 } else {
                     $banner_url = "";
                 }
@@ -151,7 +136,7 @@
                 print(" <a class=\"list-item\" href=\"/games/details?id=" . $atlas_id . "\">
                 <div class=\"row\">       
                 <div class=\"col-sm-2\">
-                    <img class=\"img-responsive\" " . $banner_url . " alt=" . $title . ">
+                    " . $banner_url . "
                 </div>            
                     <div class=\"col-sm-10\">
                         <h3>" . $title . "</h3>
@@ -167,16 +152,6 @@
         <div class="pagination-wrapper">
             <ul class="pagination pagination-lg"></ul>
         </div>
-
-        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.12.0/jquery.min.js"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery-validate/1.15.0/jquery.validate.min.js"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/tooltipster/3.3.0/js/jquery.tooltipster.min.js"></script>
-        <script src="Resources/Scripts/toolkit.min.js"></script>
-        <script src="Resources/Scripts/application.js?v=2"></script>
-        <script src="Resources/Scripts/jquery.twbsPagination.min.js"></script>
-        <script src="Resources/Scripts/jquery.rateit.min.js"></script>
-        <script src="Resources/Scripts/custom.js?v=6"></script>
-        <script src="Resources/Scripts/ekko-lightbox.min.js"></script>
 
         <script>
             var pages = '<?php echo $pages; ?>'; //We store the number of pages in a variable to use it below
