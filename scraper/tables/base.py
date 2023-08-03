@@ -12,7 +12,7 @@ class query:
         query = (
             """
                CREATE TABLE IF NOT EXISTS atlas (
-                    atlas_id INTEGER PRIMARY KEY AUTO"""
+                    atlas_id INT PRIMARY KEY AUTO"""
             + us
             + """INCREMENT,
                     id_name LONGTEXT NOT NULL UNIQUE,
@@ -68,15 +68,6 @@ class query:
             """
         return query
 
-    def createIdSequence(type):
-        query = """
-                CREATE TABLE IF NOT EXISTS id_sequence (
-                    tbl TINYTEXT NOT NULL,
-                    id INT NOT NULL
-                );
-            """
-        return query
-
     def deleteTable(table):
         query = "DROP TABLE IF EXISTS `" + table + "`;"
         return query
@@ -100,10 +91,10 @@ class query:
             us = "_"
         query = """
                 CREATE TABLE IF NOT EXISTS dlsite_circle (
-                    id TINYTEXT PRIMARY KEY NOT NULL,
+                    circle_id INT PRIMARY KEY NOT NULL UNIQUE,
                     name TINYTEXT NOT NULL,
                     url LONGTEXT NOT NULL,
-                    img LONGTEST NOT NULL
+                    img LONGTEXT NOT NULL
                 );
             """
         return query
@@ -113,6 +104,7 @@ class query:
             CREATE TABLE IF NOT EXISTS dlsite (
                 dlsite_id INT NOT NULL UNIQUE PRIMARY KEY,
                 atlas_id INT NOT NULL UNIQUE,
+                circle_id INT NOT NULL,
                 banner_url LONGTEXT, 
                 site_url LONGTEXT,
                 register_date BIGINT,
@@ -121,7 +113,44 @@ class query:
                 tags LONGTEXT,
                 rating DOUBLE,
                 screens LONGTEXT,
-                FOREIGN KEY (atlas_id) REFERENCES atlas(atlas_id)
+                FOREIGN KEY (atlas_id) REFERENCES atlas(atlas_id),
+                FOREIGN KEY (circle_id) REFERENCES dlsite_circle(circle_id)                
+            );
+        """
+        return query
+
+    def createLewdcornereTable(type):
+        query = """
+            CREATE TABLE IF NOT EXISTS lewdcorner (
+                lc_id INT NOT NULL UNIQUE PRIMARY KEY,
+                atlas_id INT NOT NULL UNIQUE,
+                banner_url LONGTEXT, 
+                site_url LONGTEXT,
+                register_date BIGINT,
+                views INT,
+                likes INT,
+                tags LONGTEXT,
+                rating DOUBLE,
+                screens LONGTEXT,
+                FOREIGN KEY (atlas_id) REFERENCES atlas(atlas_id)              
+            );
+        """
+        return query
+    
+    def createSxsTable(type):
+        query = """
+            CREATE TABLE IF NOT EXISTS sxs (
+                sxs_id INT NOT NULL UNIQUE PRIMARY KEY,
+                atlas_id INT NOT NULL UNIQUE,
+                banner_url LONGTEXT, 
+                site_url LONGTEXT,
+                register_date BIGINT,
+                views INT,
+                likes INT,
+                tags LONGTEXT,
+                rating DOUBLE,
+                screens LONGTEXT,
+                FOREIGN KEY (atlas_id) REFERENCES atlas(atlas_id)              
             );
         """
         return query
