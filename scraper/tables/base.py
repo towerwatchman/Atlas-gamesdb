@@ -12,7 +12,7 @@ class query:
         query = (
             """
                CREATE TABLE IF NOT EXISTS atlas (
-                    atlas_id INT PRIMARY KEY AUTO"""
+                    atlas_id INTEGER NOT NULL PRIMARY KEY AUTO"""
             + us
             + """INCREMENT,
                     id_name LONGTEXT NOT NULL UNIQUE,
@@ -45,6 +45,7 @@ class query:
                 );
             """
         )
+        print(query)
         return query
 
     def createF95Table(type):
@@ -136,7 +137,7 @@ class query:
             );
         """
         return query
-    
+
     def createSxsTable(type):
         query = """
             CREATE TABLE IF NOT EXISTS sxs (

@@ -23,91 +23,93 @@ class dlsite:
     def __init__(self) -> None:
         pass
 
+    circle_list = [
+        "A",
+        "B",
+        "C",
+        "D",
+        "E",
+        "F",
+        "G",
+        "H",
+        "I",
+        "J",
+        "K",
+        "L",
+        "M",
+        "N",
+        "O",
+        "P",
+        "Q",
+        "R",
+        "S",
+        "T",
+        "U",
+        "V",
+        "W",
+        "X",
+        "Y",
+        "Z",
+        "あ",
+        "い",
+        "う",
+        "え",
+        "お",
+        "か",
+        "き",
+        "く",
+        "け",
+        "こ",
+        "さ",
+        "し",
+        "す",
+        "せ",
+        "そ",
+        "た",
+        "ち",
+        "つ",
+        "て",
+        "と",
+        "な",
+        "に",
+        "ぬ",
+        "ね",
+        "の",
+        "は",
+        "ひ",
+        "ふ",
+        "へ",
+        "ほ",
+        "ま",
+        "み",
+        "む",
+        "め",
+        "も",
+        "や",
+        "ゆ",
+        "よ",
+        "ら",
+        "り",
+        "る",
+        "れ",
+        "ろ",
+        "わ",
+        "を",
+        "ん",
+    ]
+
     def getIDs(type, db_type):
         baseURL = "https://www.dlsite.com/pro/product/info/ajax?product_id=" + type
 
         starting_id = 1000
 
-    def updateCircleID(db_type):
-        baseURL = "https://www.dlsite.com/maniax/circle/list/=/name_header/"
-        circle_list = [
-            "A",
-            "B",
-            "C",
-            "D",
-            "E",
-            "F",
-            "G",
-            "H",
-            "I",
-            "J",
-            "K",
-            "L",
-            "M",
-            "N",
-            "O",
-            "P",
-            "Q",
-            "R",
-            "S",
-            "T",
-            "U",
-            "V",
-            "W",
-            "X",
-            "Y",
-            "Z",
-            "あ",
-            "い",
-            "う",
-            "え",
-            "お",
-            "か",
-            "き",
-            "く",
-            "け",
-            "こ",
-            "さ",
-            "し",
-            "す",
-            "せ",
-            "そ",
-            "た",
-            "ち",
-            "つ",
-            "て",
-            "と",
-            "な",
-            "に",
-            "ぬ",
-            "ね",
-            "の",
-            "は",
-            "ひ",
-            "ふ",
-            "へ",
-            "ほ",
-            "ま",
-            "み",
-            "む",
-            "め",
-            "も",
-            "や",
-            "ゆ",
-            "よ",
-            "ら",
-            "り",
-            "る",
-            "れ",
-            "ろ",
-            "わ",
-            "を",
-            "ん",
-        ]
-
+    def updateCircleID(db_type, item_type):
+        if item_type == "doijin":
+            baseURL = "https://www.dlsite.com/maniax/circle/list/=/name_header/"
+        if item_type == "hgames":
+            baseURL = "https://www.dlsite.com/pro/circle/list/=/name_header"
         tmp = {}
-
-        for circle in circle_list:
+        for circle in dlsite.circle_list:
             request = requests.get(baseURL + circle)
             if request.status_code == 200:
                 page = BeautifulSoup(request.content, "html.parser")
@@ -123,20 +125,21 @@ class dlsite:
                     tmp["name"] = cells[1].get_text()
                     tmp["url"] = cells[2].find("a", href=True)["href"]
                     tmp["img"] = cells[2].find("img")["src"]
-                    print(
-                        "ID: "
-                        + str(tmp["id"])
-                        + " | Circle: "
-                        + str(tmp["name"])
-                        + " | url: "
-                        + str(tmp["url"])
-                        + " | img: "
-                        + str(tmp["img"])
-                    )
+                    print(tmp["id"])
+                    # print(
+                    #    "ID: "
+                    #    + str(tmp["id"])
+                    #    + " | Circle: "
+                    #    + str(tmp["name"])
+                    #    + " | url: "
+                    #    + str(tmp["url"])
+                    #    + " | img: "
+                    #    + str(tmp["img"])
+                    # )
                     UpdatetableDynamic("dlsite_circle", tmp, db_type)
-                print("SUCCESS")
+                print("Circle ID's Updated for " + circle)
             else:
-                print("ERROR")
+                print("ERROR! Unable to update for: " + circle)
 
     def getAllGamesHtml(db_type):
         print("test")
@@ -147,6 +150,7 @@ class dlsite:
         dlsite_id = "000000"
 
         atlasRecord = {}
+        dlsiteRecord = {}
         for x in range(1001, 20000):
             # Format string
             if len(str(x)) == 4:
@@ -158,30 +162,44 @@ class dlsite:
             request = requests.get(base_url + dlsite_id)
             if request.status_code == 200:
                 page = json.loads(request.text)
+                dlsiteRecord["id"] = "7" + dlsite_id
                 atlasRecord["creator"] = findDlsiteMaker(
                     "dlsite_circle", page["VJ" + dlsite_id]["maker_id"], db_type
                 )
+                print(atlasRecord["creator"])
                 atlasRecord["site_url"] = page["VJ" + dlsite_id]["down_url"]
                 atlasRecord["title"] = page["VJ" + dlsite_id]["work_name"]
                 atlasRecord["banner_url"] = page["VJ" + dlsite_id]["work_image"]
-                work_type = page["VJ" + dlsite_id]["work_type"]
-                regist_date = page["VJ" + dlsite_id]["regist_date"]
+                atlasRecord["short_name"] = re.sub(
+                    "[\W_]+",
+                    "",
+                    atlasRecord["title"].strip().replace(" ", ""),
+                ).upper()
+                atlasRecord["id_name"] = (
+                    atlasRecord["short_name"] + "_" + atlasRecord["creator"].upper()
+                )
+                dlsiteRecord["work_type"] = page["VJ" + dlsite_id]["work_type"]
+                dlsiteRecord["regist_date"] = page["VJ" + dlsite_id]["regist_date"]
 
+            dlsite.updateRecord(
+                "dlsite", atlasRecord, dlsiteRecord, db_type, dlsite_id, 8002
+            )
             print(page["VJ" + dlsite_id]["maker_id"])
             print(atlasRecord)
-            time.sleep(100)
 
-    def updateRecord(self, table, aRecord, dRecord, db_type, thread_id):
-        UpdatetableDynamic(table, aRecord, db_type)
+            time.sleep(10)
+
+    def updateRecord(table, aRecord, dRecord, db_type, thread_id):
+        UpdatetableDynamic("atlas", aRecord, db_type)
         # print(aRecord)
-        id = findIdByTitle(table, aRecord["id_name"], db_type)
+        id = findIdByTitle("atlas", aRecord["id_name"], db_type)
         # print(id)
         dRecord["atlas_id"] = id
         # print(fRecord)
-        UpdatetableDynamic("f95_zone", dRecord, db_type)
+        UpdatetableDynamic(table, dRecord, db_type)
         print(
-            "Database update completed for f95_id:",
-            dRecord["f95_id"],
+            "Database update completed for dlsite_id:",
+            dRecord["id"],
             " on thread:",
             thread_id,
         )
