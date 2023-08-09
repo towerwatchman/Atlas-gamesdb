@@ -45,7 +45,6 @@ class query:
                 );
             """
         )
-        print(query)
         return query
 
     def createF95Table(type):
@@ -106,6 +105,7 @@ class query:
                 dlsite_id INT NOT NULL UNIQUE PRIMARY KEY,
                 atlas_id INT NOT NULL UNIQUE,
                 circle_id INT NOT NULL,
+                work_type TINYTEXT,
                 banner_url LONGTEXT, 
                 site_url LONGTEXT,
                 register_date BIGINT,

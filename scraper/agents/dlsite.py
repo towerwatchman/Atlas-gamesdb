@@ -103,11 +103,9 @@ class dlsite:
 
         starting_id = 1000
 
+    # books, pro, maniax
     def updateCircleID(db_type, item_type):
-        if item_type == "doijin":
-            baseURL = "https://www.dlsite.com/maniax/circle/list/=/name_header/"
-        if item_type == "hgames":
-            baseURL = "https://www.dlsite.com/pro/circle/list/=/name_header"
+        baseURL = "https://www.dlsite.com/" + item_type + "/circle/list/=/name_header/"
         tmp = {}
         for circle in dlsite.circle_list:
             request = requests.get(baseURL + circle)
@@ -121,11 +119,11 @@ class dlsite:
                 )
                 for maker in maker_list:
                     cells = maker.find_all("td")
-                    tmp["id"] = cells[0].get_text()
+                    tmp["circle_id"] = cells[0].get_text()
                     tmp["name"] = cells[1].get_text()
                     tmp["url"] = cells[2].find("a", href=True)["href"]
                     tmp["img"] = cells[2].find("img")["src"]
-                    print(tmp["id"])
+                    # print(tmp["circle_id"])
                     # print(
                     #    "ID: "
                     #    + str(tmp["id"])
@@ -137,7 +135,7 @@ class dlsite:
                     #    + str(tmp["img"])
                     # )
                     UpdatetableDynamic("dlsite_circle", tmp, db_type)
-                print("Circle ID's Updated for " + circle)
+                print(item_type + " Circle ID's Updated for " + circle)
             else:
                 print("ERROR! Unable to update for: " + circle)
 
@@ -158,36 +156,40 @@ class dlsite:
             if len(str(x)) == 5:
                 dlsite_id = "0" + str(x)
 
-            print(base_url + dlsite_id)
+            print("Running for " + "VJ" + str(dlsite_id))
             request = requests.get(base_url + dlsite_id)
             if request.status_code == 200:
                 page = json.loads(request.text)
-                dlsiteRecord["id"] = "7" + dlsite_id
+                dlsiteRecord["dlsite_id"] = "7" + dlsite_id
+                dlsiteRecord["circle_id"] = page["VJ" + dlsite_id]["maker_id"]
                 atlasRecord["creator"] = findDlsiteMaker(
-                    "dlsite_circle", page["VJ" + dlsite_id]["maker_id"], db_type
+                    "dlsite_circle", dlsiteRecord["circle_id"], db_type
                 )
-                print(atlasRecord["creator"])
-                atlasRecord["site_url"] = page["VJ" + dlsite_id]["down_url"]
+                if atlasRecord["creator"] == 0:
+                    atlasRecord["creator"] == dlsiteRecord["circle_id"]
+                # print(atlasRecord["creator"])
+                dlsiteRecord["site_url"] = page["VJ" + dlsite_id]["down_url"]
                 atlasRecord["title"] = page["VJ" + dlsite_id]["work_name"]
-                atlasRecord["banner_url"] = page["VJ" + dlsite_id]["work_image"]
+                dlsiteRecord["banner_url"] = page["VJ" + dlsite_id]["work_image"]
+                atlasRecord["version"] = "N/A"
                 atlasRecord["short_name"] = re.sub(
                     "[\W_]+",
                     "",
                     atlasRecord["title"].strip().replace(" ", ""),
                 ).upper()
                 atlasRecord["id_name"] = (
-                    atlasRecord["short_name"] + "_" + atlasRecord["creator"].upper()
+                    atlasRecord["short_name"]
+                    + "_"
+                    + str(atlasRecord["creator"]).upper()
                 )
                 dlsiteRecord["work_type"] = page["VJ" + dlsite_id]["work_type"]
-                dlsiteRecord["regist_date"] = page["VJ" + dlsite_id]["regist_date"]
+                dlsiteRecord["register_date"] = page["VJ" + dlsite_id]["regist_date"]
 
-            dlsite.updateRecord(
-                "dlsite", atlasRecord, dlsiteRecord, db_type, dlsite_id, 8002
-            )
-            print(page["VJ" + dlsite_id]["maker_id"])
-            print(atlasRecord)
+            dlsite.updateRecord("dlsite", atlasRecord, dlsiteRecord, db_type, dlsite_id)
+            # print(page["VJ" + dlsite_id]["maker_id"])
+            print(dlsiteRecord)
 
-            time.sleep(10)
+            time.sleep(1)
 
     def updateRecord(table, aRecord, dRecord, db_type, thread_id):
         UpdatetableDynamic("atlas", aRecord, db_type)
@@ -199,7 +201,7 @@ class dlsite:
         UpdatetableDynamic(table, dRecord, db_type)
         print(
             "Database update completed for dlsite_id:",
-            dRecord["id"],
+            dRecord["dlsite_id"],
             " on thread:",
             thread_id,
         )

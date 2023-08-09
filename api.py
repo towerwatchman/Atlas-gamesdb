@@ -24,9 +24,9 @@ CreateDatabase(database_connection)
 # Download from sources
 # F95 : 1st Source
 # f95.downloadThreadSummary(f95, download.NEW, True, database_connection)
-dlsite.updateCircleID(database_connection, "hgames")
+# dlsite.updateCircleID(database_connection, "pro")
 # dlsite.getIDs(type, database_connection)
-# dlsite.getJSONgame(database_connection)
+dlsite.getJSONgame(database_connection)
 # print(asyncio.run(dlsite.getTitleID("RJ303564")))
 # Package data based on date. As of right now it will output a full db dump.
 # packager.createPackage(database_connection)

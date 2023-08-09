@@ -217,7 +217,7 @@ def findDlsiteMaker(table, id, type):
         )
         cursor = con.cursor(prepared=True)
 
-    query = "SELECT name FROM " + table + ' WHERE id = "' + id + '"'
+    query = "SELECT name FROM " + table + ' WHERE circle_id = "' + id + '"'
 
     cursor.execute(query)
     id = cursor.fetchone()
