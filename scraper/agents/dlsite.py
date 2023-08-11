@@ -143,7 +143,7 @@ class dlsite:
         print("test")
         # https://www.dlsite.com/pro/fsr/=/language/en/sex_category[0]/male/work_category[0]/pc/order/release/options_and_or/and/per_page/100/lang_options[0]/Japanese/lang_options[1]/English/lang_options[2]/Alingual/show_type/1
 
-    def getJSONgame(db_type, content_type, worker_type):
+    def getJSONgame(db_type, content_type, worker_type, start_id, end_id):
         dtype = worker_type
         base_url = (
             "https://www.dlsite.com/"
@@ -155,13 +155,13 @@ class dlsite:
 
         atlasRecord = {}
         dlsiteRecord = {}
-        for x in range(1000, 20000):
+        for x in range(start_id, end_id):
             # Format string
             if len(str(x)) == 4:
                 dlsite_id = "00" + str(x)
             if len(str(x)) == 5:
                 dlsite_id = "0" + str(x)
-
+            print(base_url +  str(dlsite_id) )
             print("Running for " + dtype + str(dlsite_id))
             request = requests.get(base_url + dlsite_id)
             if request.status_code == 200:

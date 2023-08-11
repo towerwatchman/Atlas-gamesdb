@@ -15,9 +15,9 @@ class query:
                     atlas_id INTEGER NOT NULL PRIMARY KEY AUTO"""
             + us
             + """INCREMENT,
+                    title TINYTEXT NOT NULL, 
                     id_name LONGTEXT NOT NULL UNIQUE,
                     short_name TINYTEXT NOT NULL,
-                    title TINYTEXT NOT NULL, 
                     original_name TINYTEXT,
                     category TINYTEXT,
                     engine TINYTEXT,

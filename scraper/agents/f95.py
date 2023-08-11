@@ -36,6 +36,7 @@ class f95:
             total_pages = tmp.upper().split("OF")[1]
             return int(total_pages)
         else:
+            print(request.status_code)
             return 0
 
     def downloadThreadSummary(self, type, include_game_info, db_type):
@@ -72,10 +73,10 @@ class f95:
                     URL = baseURL() + "?order=post_date&direction=desc"
 
                 # First attempt to get url
-
                 page = requests.get(URL)
                 if page.status_code == 200:
                     html = BeautifulSoup(page.content, "html.parser")
+                    #Get each item from page
                     elements = html.find_all("div", class_="structItem")
                     # create thread for each item
                     threads = []
