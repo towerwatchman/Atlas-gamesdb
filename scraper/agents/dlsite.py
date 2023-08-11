@@ -143,35 +143,41 @@ class dlsite:
         print("test")
         # https://www.dlsite.com/pro/fsr/=/language/en/sex_category[0]/male/work_category[0]/pc/order/release/options_and_or/and/per_page/100/lang_options[0]/Japanese/lang_options[1]/English/lang_options[2]/Alingual/show_type/1
 
-    def getJSONgame(db_type):
-        base_url = "https://www.dlsite.com/pro/product/info/ajax?product_id=VJ"
+    def getJSONgame(db_type, content_type, worker_type):
+        dtype = worker_type
+        base_url = (
+            "https://www.dlsite.com/"
+            + content_type
+            + "/product/info/ajax?product_id="
+            + dtype
+        )
         dlsite_id = "000000"
 
         atlasRecord = {}
         dlsiteRecord = {}
-        for x in range(1835, 20000):
+        for x in range(1000, 20000):
             # Format string
             if len(str(x)) == 4:
                 dlsite_id = "00" + str(x)
             if len(str(x)) == 5:
                 dlsite_id = "0" + str(x)
 
-            print("Running for " + "VJ" + str(dlsite_id))
+            print("Running for " + dtype + str(dlsite_id))
             request = requests.get(base_url + dlsite_id)
             if request.status_code == 200:
                 try:
                     page = json.loads(request.text)
-                    dlsiteRecord["dlsite_id"] = "7" + dlsite_id
-                    dlsiteRecord["circle_id"] = page["VJ" + dlsite_id]["maker_id"]
+                    dlsiteRecord["dlsite_id"] = dtype + dlsite_id  # "7" + dlsite_id
+                    dlsiteRecord["circle_id"] = page[dtype + dlsite_id]["maker_id"]
                     atlasRecord["creator"] = findDlsiteMaker(
                         "dlsite_circle", dlsiteRecord["circle_id"], db_type
                     )
                     if atlasRecord["creator"] == 0:
                         atlasRecord["creator"] == dlsiteRecord["circle_id"]
                     # print(atlasRecord["creator"])
-                    dlsiteRecord["site_url"] = page["VJ" + dlsite_id]["down_url"]
-                    atlasRecord["title"] = page["VJ" + dlsite_id]["work_name"]
-                    dlsiteRecord["banner_url"] = page["VJ" + dlsite_id]["work_image"]
+                    dlsiteRecord["site_url"] = page[dtype + dlsite_id]["down_url"]
+                    atlasRecord["title"] = page[dtype + dlsite_id]["work_name"]
+                    dlsiteRecord["banner_url"] = page[dtype + dlsite_id]["work_image"]
                     atlasRecord["version"] = "N/A"
                     atlasRecord["short_name"] = re.sub(
                         "[\W_]+",
@@ -183,16 +189,18 @@ class dlsite:
                         + "_"
                         + str(atlasRecord["creator"]).upper()
                     )
-                    dlsiteRecord["work_type"] = page["VJ" + dlsite_id]["work_type"]
-                    dlsiteRecord["register_date"] = page["VJ" + dlsite_id][
+                    dlsiteRecord["work_type"] = page[dtype + dlsite_id]["work_type"]
+                    dlsiteRecord["register_date"] = page[dtype + dlsite_id][
                         "regist_date"
                     ]
 
                     dlsite.updateRecord(
                         "dlsite", atlasRecord, dlsiteRecord, db_type, dlsite_id
                     )
-                    # print(page["VJ" + dlsite_id]["maker_id"])
+                    # print(page[dtype + dlsite_id]["maker_id"])
+                    print(atlasRecord)
                     print(dlsiteRecord)
+
                 except:
                     print("general error")
 
