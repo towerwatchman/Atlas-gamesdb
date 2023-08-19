@@ -27,7 +27,7 @@ steam_dict = [
     ]
 
 #Set base folder directory.
-base_dir = 'C:\games'
+base_dir = 'C:\games_test'
 
 if not os.path.exists(base_dir):
     os.mkdir(base_dir);
@@ -90,7 +90,7 @@ for steam_id in steam_dict:
     banner_url = 'https://cdn.cloudflare.steamstatic.com/steam/apps/'+str(id)+'/header.jpg'
     cover_url = 'https://cdn.cloudflare.steamstatic.com/steam/apps/'+str(id)+'/library_600x900.jpg'
     banner_w_url = 'https://cdn.cloudflare.steamstatic.com/steam/apps/'+str(id)+'/library_hero.jpg'
-    icon_url = 'https://cdn.cloudflare.steamstatic.com/steam/apps/'+str(id)+'/logo.png'
+    logo_url = 'https://cdn.cloudflare.steamstatic.com/steam/apps/'+str(id)+'/logo.png'
     
     #Banner
     print(str(datetime.now()) +  ": Downloading Banner Image")
@@ -109,6 +109,12 @@ for steam_id in steam_dict:
     image = requests.get(banner_w_url, stream=True)
     if image.status_code == 200:
         with open(os.path.join(p_version, "banner_w.jpg"),'wb') as f:
+            shutil.copyfileobj(image.raw, f)
+
+    print(str(datetime.now()) +  ": Downloading Logo Image")
+    image = requests.get(logo_url, stream=True)
+    if image.status_code == 200:
+        with open(os.path.join(p_version, "logo.jpg"),'wb') as f:
             shutil.copyfileobj(image.raw, f)
     
     #Adding Exe
