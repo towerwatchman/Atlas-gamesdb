@@ -23,10 +23,10 @@ CreateDatabase(database_connection)
 
 # Download from sources
 # F95 : 1st Source
-f95.downloadThreadSummary(f95, download.NEW, False, database_connection)
+f95.downloadThreadSummary(f95, download.NEW, True, database_connection)
 
 
-# dlsite.updateCircleID(database_connection, "pro")
+#dlsite.updateCircleID(database_connection, "pro")
 #dlsite.updateCircleID(database_connection, "maniax")
 #dlsite.updateCircleID(database_connection, "pro")
 # dlsite.getIDs(type, database_connection)

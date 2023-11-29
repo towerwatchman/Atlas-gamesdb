@@ -47,7 +47,7 @@ def UpdatetableDynamic(table, values, type):
         con = mysql.connector.connect(
             user=config.user_readdonly(),
             password=config.password_readonly(),
-            host=config.host(),
+            host=config.host(database.REMOTE),
             database=config.database(),
         )
         cursor = con.cursor(prepared=True)
@@ -98,7 +98,7 @@ def CreateDatabase(type):
         cnx = mysql.connector.connect(
             user=config.user_readdonly(),
             password=config.password_readonly(),
-            host=config.host(),
+            host=config.host(database.REMOTE),
             database=config.database(),
         )
         print("Creating Remote Database")
@@ -125,7 +125,7 @@ def getLastUsedId(type):
         con = mysql.connector.connect(
             user=config.user_readdonly(),
             password=config.password_readonly(),
-            host=config.host(),
+            host=config.host(database.REMOTE),
             database=config.database(),
         )
         cursor = con.cursor(prepared=True)
@@ -156,7 +156,7 @@ def DeleteTables(type):
         cnx = mysql.connector.connect(
             user=config.user_readdonly(),
             password=config.password_readonly(),
-            host=config.host(),
+            host=config.host(database.REMOTE),
             database=config.database(),
         )
         print("Deleting Remote Tables")
@@ -186,7 +186,7 @@ def findIdByTitle(table, id_name, type):
         con = mysql.connector.connect(
             user=config.user_readdonly(),
             password=config.password_readonly(),
-            host=config.host(),
+            host=config.host(database.REMOTE),
             database=config.database(),
         )
         cursor = con.cursor(prepared=True)
@@ -212,7 +212,7 @@ def findDlsiteMaker(table, id, type):
         con = mysql.connector.connect(
             user=config.user_readdonly(),
             password=config.password_readonly(),
-            host=config.host(),
+            host=config.host(database.REMOTE),
             database=config.database(),
         )
         cursor = con.cursor(prepared=True)
@@ -238,7 +238,7 @@ def downloadBase(type, table):
         con = mysql.connector.connect(
             user=config.user_readdonly(),
             password=config.password_readonly(),
-            host=config.host(),
+            host=config.host(database.REMOTE),
             database=config.database(),
         )
         cursor = con.cursor(dictionary=True)

@@ -10,9 +10,11 @@ class config:
         password = "1Z#y!*Ki+"
         return password
 
-    def host():
-        #host = "atlas-gamesdb.com"
-        host = "localhost"
+    def host(type):
+        if type == 1:
+            host = "atlas-gamesdb.com"
+        else:
+            host = "localhost"
         return host
 
     def database():
