@@ -8,19 +8,23 @@ from scraper.utils.packager import *
 from scraper.agents.dlsite import *
 
 #Vars
-f95_full_download = False
 f95 = False
+f95_full_download = False
 dlsite = False
 create_package = False
 #Check for input arguments and continue
 if len(sys.argv) > 1:
-    f95_full_download == sys.argv[1]
+    if sys.argv[1] == 'true':
+        f95 = True
 if len(sys.argv) > 2:
-    f95 == sys.argv[2]
+    if sys.argv[2] == 'true':
+        f95_full_download = True
 if len(sys.argv) > 3:
-    dlsite == sys.argv[3]
+    if sys.argv[3] == 'true':
+        dlsite = True
 if len(sys.argv) > 4:
-    create_package == sys.argv[4]
+    if sys.argv[4] == 'true':
+        create_package = True
 
 
 # Set database type: local is pc (Windows), remote is server (Linux)
