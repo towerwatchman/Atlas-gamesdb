@@ -8,20 +8,20 @@ from scraper.utils.packager import *
 from scraper.agents.dlsite import *
 
 #Vars
-f95 = False
+f95_enable = False
 f95_full_download = False
-dlsite = False
+dlsite_enable = False
 create_package = False
 #Check for input arguments and continue
 if len(sys.argv) > 1:
     if sys.argv[1] == 'true':
-        f95 = True
+        f95_enable = True
 if len(sys.argv) > 2:
     if sys.argv[2] == 'true':
         f95_full_download = True
 if len(sys.argv) > 3:
     if sys.argv[3] == 'true':
-        dlsite = True
+        dlsite_enable = True
 if len(sys.argv) > 4:
     if sys.argv[4] == 'true':
         create_package = True
@@ -45,11 +45,11 @@ CreateDatabase(database_connection)
 
 # Download from sources
 # F95 : 1st Source
-if f95:
+if f95_enable:
     print("Downloading from F95")
     f95.downloadThreadSummary(f95, download.NEW, f95_full_download, database_connection)
 
-if dlsite:
+if dlsite_enable:
     print("Downloading from DLSITE")
     dlsite.updateCircleID(database_connection, "pro")
     dlsite.updateCircleID(database_connection, "maniax")
