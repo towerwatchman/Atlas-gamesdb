@@ -73,7 +73,7 @@ class f95:
         )
         # Get total page count and ittereate through them
         counter = 0
-        for item in range(1, self.getThreadPageCount()):
+        for item in range(1, self.getThreadPageCount() + 1):
             try:
                 # Page manipulation
                 print("---- Starting Page:", str(item), "----")
