@@ -22,7 +22,7 @@ class query:
                     category TINYTEXT,
                     engine TINYTEXT,
                     status TINYTEXT,
-                    version TINYTEXT NOT NULL,
+                    version TINYTEXT,
                     developer TINYTEXT,
                     creator TINYTEXT,
                     overview LONGTEXT,
