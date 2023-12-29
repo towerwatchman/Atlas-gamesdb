@@ -140,6 +140,7 @@ class f95:
                                     atlasRecord["censored"] = Titem["censored"]
                                     atlasRecord["language"] = Titem["language"]
                                     f95Record["likes"] = Titem["likes"]
+                                    print("Likes",Titem["likes"])
                                     atlasRecord["translations"] = Titem["translations"]
                                     atlasRecord["length"] = Titem["length"]
                                     # Titem["vndb"] = Titem["vndb"]
@@ -257,7 +258,7 @@ class f95:
                 userExtras = gsoup.find("div", class_="message-userExtras").find_all(
                     "dd"
                 )
-                likes = userExtras[2].get_text()
+                likes = userExtras[2].get_text().replace(",","")
             except:
                 likes = ""
             # Screenshots
