@@ -8,7 +8,7 @@ from scraper.utils.packager import *
 from scraper.agents.dlsite import *
 
 #Vars
-f95_enable = False
+f95_enable = True
 f95_full_download = False
 dlsite_enable = False
 create_package = False
@@ -44,6 +44,7 @@ CreateDatabase(database_connection)
 
 # Download from sources
 # F95 : 1st Source
+#f95.downloadLatest(f95, download.FULL, database_connection)
 if f95_enable:
     print("Downloading from F95")
     f95.downloadThreadSummary(f95, download.NEW, f95_full_download, database_connection)

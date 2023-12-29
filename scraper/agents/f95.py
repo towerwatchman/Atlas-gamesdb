@@ -1,4 +1,5 @@
 import requests
+import json
 from urllib.request import urlopen
 from bs4 import BeautifulSoup
 from datetime import datetime
@@ -9,6 +10,7 @@ from scraper.utils.epoch import *
 from datetime import datetime
 import random
 from threading import Thread
+import pandas as pd
 import sys
 
 import time
@@ -19,6 +21,10 @@ import time
 
 def baseURL():
     return "https://f95zone.to/forums/games.2/"
+
+def baseJsonURL():
+    #&page=1&sort=date&rows=90
+    return "https://f95zone.to/sam/latest_alpha/latest_data.php?cmd=list&cat=games"
 
 
 class f95:
@@ -34,6 +40,16 @@ class f95:
             page = BeautifulSoup(request.content, "html.parser")
             tmp = page.select("div.pageNavSimple")[0].find_all("a")[0].text.strip()
             total_pages = tmp.upper().split("OF")[1]
+            return int(total_pages)
+        else:
+            print(request.status_code)
+            return 0
+    
+    def getLatestPageCount():
+        request = requests.get(baseJsonURL() + "&page=1&sort=date&rows=90")
+        if request.status_code == 200:
+            data = request.json()
+            total_pages = data["msg"]["pagination"]["total"]
             return int(total_pages)
         else:
             print(request.status_code)
@@ -123,6 +139,7 @@ class f95:
                                     atlasRecord["release_date"] = Titem["release_date"]
                                     atlasRecord["censored"] = Titem["censored"]
                                     atlasRecord["language"] = Titem["language"]
+                                    atlasRecord["likes"] = Titem["likes"]
                                     atlasRecord["translations"] = Titem["translations"]
                                     atlasRecord["length"] = Titem["length"]
                                     # Titem["vndb"] = Titem["vndb"]
@@ -242,7 +259,7 @@ class f95:
                 )
                 likes = userExtras[2].get_text()
             except:
-                likes = "error"
+                likes = ""
             # Screenshots
             alinks = job_elements[0].find_all("a")
             # skip first item since we know that it is banner image
@@ -430,30 +447,39 @@ class f95:
             Titem["os"] = os
             Titem["tags"] = tags
             Titem["screens"] = screens
+            Titem["likes"] = likes
         return Titem
 
     def downloadLatest(self, type):
-        print(type)
-        # get total pages
-        # get id list
+        pages = self.getLatestPageCount()
+        print(
+            "Staring download from F95",
+            "\nDownload type:",
+            type,
+            "\n",
+            pages,
+            "total pages",
+        )
+        for index in range(1, int(pages)):
+            atlasRecord = gameRecord.atlasRecord()
+            f95Record = gameRecord.f95Record()   
+            try:
+                request = requests.get(baseJsonURL() + "&page=" + str(index) + "&sort=date&rows=90")
+                if request.status_code == 200:
+                    data = request.json()
+                    games = data["msg"]["data"]
+                    df = pd.DataFrame(games)
+                    for idx in df.index:
+                        atlasRecord["title"] = df["title"]
+                        
+            except Exception as ex:
+                print(ex)
+                continue
+            time.sleep(500)
+            
 
-    def getLatestUpdateIds():
-        alpha_url = "https://f95zone.to/sam/latest_alpha/"
-        page = requests.get(alpha_url)
-        print(page)
-        if page.status_code == 200:
-            html = BeautifulSoup(page.content, "html.parser")
-            print(html)
-        # elements = html.find_all("script")
-
-        # print(elements)
-        # for element in elements:
-        #    print(element)
-
-    # https://f95zone.to/sam/latest_alpha/
-    # <script>
-    # var latestUpdates
-    # Need to have an id for each item for now use f95_id. will fix later
+   
+   
     def formatDictionary(data):
         data = {k: v for k, v in data.items() if v}
         return data
