@@ -8,7 +8,7 @@ from scraper.utils.packager import *
 from scraper.agents.dlsite import *
 
 #Vars
-f95_enable = False
+f95_enable = True
 f95_full_download = False
 dlsite_enable = False
 create_package = False
@@ -42,22 +42,26 @@ createDirectories(database_connection)
 # Create Database for Atlas: db will create based on sytem
 CreateDatabase(database_connection)
 
-
 # Download from sources
 # F95 : 1st Source
 if f95_enable:
     print("Downloading from F95")
     f95.downloadThreadSummary(f95, download.NEW, f95_full_download, database_connection)
 
+# Dlsite : 2nd Source
 if dlsite_enable:
     print("Downloading from DLSITE")
     dlsite.updateCircleID(database_connection, "pro")
     dlsite.updateCircleID(database_connection, "maniax")
     dlsite.updateCircleID(database_connection, "pro")
+
+# Steam : 3rd Source
+    
 # dlsite.getIDs(type, database_connection)
 #dlsite.getJSONgame(database_connection, "maniax", "RE") # 1704
 #dlsite.getJSONgame(database_connection, "maniax", "RJ", 5728, 20000) #5727
 # print(asyncio.run(dlsite.getTitleID("RJ303564")))
+    
 # Package data based on date. As of right now it will output a full db dump.
 if create_package:
     print("Creating Package")

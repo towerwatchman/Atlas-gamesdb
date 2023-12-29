@@ -42,9 +42,8 @@ class f95:
     def downloadThreadSummary(self, type, include_game_info, db_type):
         # need to do a check, if there are 0 total pages then wait. It means they are doing a db backup
         # Start remote connection
-        # assign records
-        atlasRecord = gameRecord.atlasRecord()
-        f95Record = gameRecord.f95Record()
+        # assign records     
+
         pages = self.getThreadPageCount()
         print(
             "Staring download from F95",
@@ -58,7 +57,7 @@ class f95:
         )
         # Get total page count and ittereate through them
         counter = 0
-        for item in range(1, self.getThreadPageCount() + 1):
+        for item in range(1, self.getThreadPageCount()):
             try:
                 # Page manipulation
                 print("---- Starting Page:", str(item), "----")
@@ -83,10 +82,14 @@ class f95:
                     # each element is an Item thread on 1 page. Each page will have 20 items
                     thread_id = 0
                     for element in elements:
+                        #reset records
+                        atlasRecord = gameRecord.atlasRecord()
+                        f95Record = gameRecord.f95Record()   
                         thread_items = element.select("div.structItem-title")[
                             0
                         ].find_all("a")
                         parser.ParseThreadItem(thread_items, atlasRecord, f95Record)
+                        #print(atlasRecord["status"])
                         f95Record["thread_publish_date"] = epoch.ConvertToUnixTime(
                             element.select("li.structItem-startDate")[0]
                             .find_all("a")[0]
