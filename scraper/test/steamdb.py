@@ -30,7 +30,7 @@ steam_dict = [
 base_dir = 'C:\games_test'
 
 if not os.path.exists(base_dir):
-    os.mkdir(base_dir);
+    os.mkdir(base_dir)
 
 
 for steam_id in steam_dict:
