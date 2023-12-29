@@ -127,7 +127,12 @@ class f95:
                         try:
                             if atlasRecord["category"] != "README":
                                 counter += 1
-                                if include_game_info:
+                                #based on last update
+                                #print(getLastUpdate(type, f95Record["f95_id"]))
+                                last_update = int(getLastUpdate(db_type, f95Record["f95_id"]))
+                                #print(last_update)
+                                if  (int(f95Record["last_thread_comment"]) > last_update) or last_update == 0:
+                                #if include_game_info:
                                     print(
                                         "getting details for id:" + f95Record["f95_id"]
                                     )
@@ -140,7 +145,6 @@ class f95:
                                     atlasRecord["censored"] = Titem["censored"]
                                     atlasRecord["language"] = Titem["language"]
                                     f95Record["likes"] = Titem["likes"]
-                                    print("Likes",Titem["likes"])
                                     atlasRecord["translations"] = Titem["translations"]
                                     atlasRecord["length"] = Titem["length"]
                                     # Titem["vndb"] = Titem["vndb"]
@@ -450,37 +454,7 @@ class f95:
             Titem["screens"] = screens
             Titem["likes"] = likes
         return Titem
-
-    def downloadLatest(self, type):
-        pages = self.getLatestPageCount()
-        print(
-            "Staring download from F95",
-            "\nDownload type:",
-            type,
-            "\n",
-            pages,
-            "total pages",
-        )
-        for index in range(1, int(pages)):
-            atlasRecord = gameRecord.atlasRecord()
-            f95Record = gameRecord.f95Record()   
-            try:
-                request = requests.get(baseJsonURL() + "&page=" + str(index) + "&sort=date&rows=90")
-                if request.status_code == 200:
-                    data = request.json()
-                    games = data["msg"]["data"]
-                    df = pd.DataFrame(games)
-                    for idx in df.index:
-                        atlasRecord["title"] = df["title"]
-                        
-            except Exception as ex:
-                print(ex)
-                continue
-            time.sleep(500)
-            
-
-   
-   
+  
     def formatDictionary(data):
         data = {k: v for k, v in data.items() if v}
         return data

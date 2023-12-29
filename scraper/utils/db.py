@@ -141,6 +141,32 @@ def getLastUsedId(type):
         id = id[0]
     return id
 
+def getLastUpdate(type, id):
+    if type == database.LOCAL:
+        con = sl.connect(dbName)
+        cursor = con.cursor()
+
+    elif type == database.REMOTE:
+        con = mysql.connector.connect(
+            user=config.user_readdonly(),
+            password=config.password_readonly(),
+            host=config.host(database.REMOTE),
+            database=config.database(),
+        )
+        cursor = con.cursor(prepared=True)
+
+    query = "SELECT last_thread_comment FROM f95_zone where f95_id = " + id
+
+    cursor.execute(query)
+    last_update = cursor.fetchone()
+    cursor.close()
+    con.close()
+    if last_update == None:
+        last_update = 0
+    else:
+        last_update = last_update[0]
+    return last_update
+
 
 def DeleteTables(type):
     # Local
