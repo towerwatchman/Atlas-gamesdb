@@ -43,5 +43,10 @@ class gameRecord:
         Titem = {
             "atlas_id": "",
             "f95_id": "",
+            "banner_url":"",
+            "site_url":"",
+            "views":"",
+            "likes": "",
+            "tags":""
         }
         return Titem
