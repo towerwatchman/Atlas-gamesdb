@@ -6,7 +6,7 @@ class data:
 
     def Tversion():
         return ['V0','V1','V2','V3','V4','FINAL', 'PROLOGUE', 'ALPHA', 'BETA', 'DEMO', 'CH.', 'CHAPTER',
-                'UPDATE', 'EPISODE', 'EP.']
+                'UPDATE', 'EPISODE', 'EP.', 'VERSION']
     def Tcategory():
         return ['README', 'SITERIP', 'COLLECTION', 'VN']
     def Tengine():
