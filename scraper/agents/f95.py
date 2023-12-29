@@ -139,7 +139,7 @@ class f95:
                                     atlasRecord["release_date"] = Titem["release_date"]
                                     atlasRecord["censored"] = Titem["censored"]
                                     atlasRecord["language"] = Titem["language"]
-                                    atlasRecord["likes"] = Titem["likes"]
+                                    f95Record["likes"] = Titem["likes"]
                                     atlasRecord["translations"] = Titem["translations"]
                                     atlasRecord["length"] = Titem["length"]
                                     # Titem["vndb"] = Titem["vndb"]
