@@ -152,6 +152,8 @@ class f95:
                                     atlasRecord["os"] = Titem["os"]
                                     f95Record["tags"] = Titem["tags"]
                                     f95Record["screens"] = Titem["screens"]
+                                else:
+                                    break    
                                 self.updateRecord(
                                     f95,
                                     "atlas",
