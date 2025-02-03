@@ -22,7 +22,7 @@ class packager:
         if type == database.LOCAL:
             folder = "C:/packages"
         if type == database.REMOTE:
-            folder = "/var/www/html/packages"
+            folder = "/usr/atlas/Atlas-gamesdb/public_html/packages"
         # Check if any files exist, if not the make first package
         if os.listdir(folder) == []:
             print("Base file does not exist. Running for first time")
