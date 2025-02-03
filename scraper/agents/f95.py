@@ -93,8 +93,6 @@ class f95:
                     html = BeautifulSoup(page.content, "html.parser")
                     #Get each item from page
                     elements = html.find_all("div", class_="structItem")
-                    # create thread for each item
-                    threads = []
                     # each element is an Item thread on 1 page. Each page will have 20 items
                     thread_id = 0
                     for element in elements:
@@ -122,13 +120,9 @@ class f95:
                         f95Record["views"] = parser.ParseViews(element)
                         f95Record["rating"] = parser.ParseRating(element)
                         atlasRecord["last_db_update"] = int(time.time())
-                        # Get details for each thread item. Skip if part of README section
-                        # print(Titem["title"])
                         try:
                             if atlasRecord["category"] != "README":
                                 counter += 1
-                                #based on last update
-                                #print(getLastUpdate(type, f95Record["f95_id"]))
                                 last_update = int(getLastUpdate(db_type, f95Record["f95_id"]))
                                 #print(last_update)
                                 if  (int(f95Record["last_thread_comment"]) > last_update) or last_update == 0:

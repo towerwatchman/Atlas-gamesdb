@@ -8,10 +8,10 @@ from scraper.utils.packager import *
 from scraper.agents.dlsite import *
 
 #Vars
-f95_enable = False
+f95_enable = True
 f95_full_download = False
 dlsite_enable = False
-create_package = False
+create_package = True
 #Check for input arguments and continue
 if len(sys.argv) > 1:
     if sys.argv[1] == 'true':

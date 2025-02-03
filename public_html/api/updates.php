@@ -12,7 +12,7 @@ if (!$conn) {
     $status = 400;
 }
 else{
-    $query = mysqli_query($conn, "SELECT * FROM updates");
+    $query = mysqli_query($conn, "SELECT * FROM updates ORDER BY date DESC");
 
     while($row = $query->fetch_assoc()) {
         $result[] = $row;
