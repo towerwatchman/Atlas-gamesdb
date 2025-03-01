@@ -119,7 +119,7 @@ class f95:
                         f95Record["replies"] = parser.ParseReplies(element)
                         f95Record["views"] = parser.ParseViews(element)
                         f95Record["rating"] = parser.ParseRating(element)
-                        atlasRecord["last_db_update"] = int(time.time())
+                        atlasRecord["last_record_update"] = int(time.time())
                         try:
                             if atlasRecord["category"] != "README":
                                 counter += 1
@@ -162,8 +162,8 @@ class f95:
                             continue
 
                         # last_thread_update = datetime.strptime(Titem['last_thread_update'].replace("T"," ")[:-5], '%Y-%m-%d %H:%M:%S')
-                        # print(last_thread_update ,">", last_db_update)
-                        # if last_thread_update >last_db_update:
+                        # print(last_thread_update ,">", last_record_update)
+                        # if last_thread_update >last_record_update:
                         # print(Titem)
                     # sys.exit()
 

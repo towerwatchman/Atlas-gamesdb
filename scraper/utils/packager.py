@@ -17,7 +17,7 @@ class packager:
     def __init__(self) -> None:
         pass
 
-    def createPackage(type):
+    def createPackage(type, start_time):
         folder = "C:/packages"
         if type == database.LOCAL:
             folder = "C:/packages"
@@ -31,21 +31,21 @@ class packager:
                 folder,
                 str(int(time.time())),
                 "base",
-                packager.createBaseUpdate(type),
+                packager.createBaseUpdate(type, start_time),
                 True,
             )
             print("Creating daily backup")
-            packager.createBackup(type, folder)
+            packager.createBackup(type, folder, start_time)
         else:
             print("Creating daily backup")
-            packager.createBackup(type, folder)
+            packager.createBackup(type, folder, start_time)
             print("Creating daily update")
             packager.createFile(
                 type,
                 folder,
                 str(int(time.time())),
                 "daily",
-                packager.createBaseUpdate(type),
+                packager.createBaseUpdate(type, start_time),
                 True,
             )
 
@@ -77,16 +77,16 @@ class packager:
             ) as outfile:
                 outfile.write(json.dumps(data, default=str))
 
-    def createBaseUpdate(type):
-        atlas_object = {"atlas": downloadBase(type, "atlas")}
-        f95_object = {"f95_zone": downloadBase(type, "f95_zone")}
+    def createBaseUpdate(type, start_time):
+        atlas_object = {"atlas": downloadBase(type, "atlas", start_time)}
+        f95_object = {"f95_zone": downloadBase(type, "f95_zone", start_time)}
         min_ver = {"min_ver": "0.0.0"}
         data = {**atlas_object, **f95_object, **min_ver}
         return data
 
-    def createBackup(type, folder):
-        atlas_object = downloadBase(type, "atlas")
-        f95_object = downloadBase(type, "f95_zone")
+    def createBackup(type, folder, start_time):
+        atlas_object = downloadBase(type, "atlas", start_time)
+        f95_object = downloadBase(type, "f95_zone", start_time)
         packager.createFile(
             type,
             os.path.join(folder, "backup"),

@@ -254,7 +254,7 @@ def findDlsiteMaker(table, id, type):
         return id[0]
 
 
-def downloadBase(type, table):
+def downloadBase(type, table, start_time):
     if type == database.LOCAL:
         con = sl.connect(dbName)
         con.row_factory = dict_factory
@@ -269,7 +269,7 @@ def downloadBase(type, table):
         )
         cursor = con.cursor(dictionary=True)
 
-    query = "SELECT * FROM " + table + " ORDER BY atlas_id"
+    query = "SELECT * FROM " + table + " WHERE last_record_update > " + str(start_time) + " ORDER BY atlas_id"
 
     cursor.execute(query)
     data = cursor.fetchall()

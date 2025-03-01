@@ -35,7 +35,7 @@ class gameRecord:
             "logo": "",
             "wallpaper": "",
             "previews": "",
-            "last_db_update": "",
+            "last_record_update": "",
         }
         return Titem
 

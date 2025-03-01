@@ -41,7 +41,7 @@ class query:
                     logo LONGTEXT,
                     wallpaper LONGTEXT,
                     previews LONGTEXT,
-                    last_db_update BIGINT
+                    last_record_update BIGINT
                 );
             """
         )

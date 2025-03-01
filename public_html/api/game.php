@@ -36,9 +36,9 @@ else{
     //verify we have an input
     $base =  "SELECT * FROM atlas";
     $query1 = mysqli_query($conn, "SELECT COUNT(title) FROM atlas AS total");
-    $query2 = mysqli_query($conn, "SELECT MAX(last_db_update) FROM atlas");
+    $query2 = mysqli_query($conn, "SELECT MAX(last_record_update) FROM atlas");
     $game_count = mysqli_fetch_row($query1)[0];
-    $last_db_update = mysqli_fetch_row($query2)[0];
+    $last_record_update = mysqli_fetch_row($query2)[0];
 
     if($title != "" | $id != "" | $version != "" | $developer != "") 
     {
@@ -83,7 +83,7 @@ if($games == "")
     $games = "[]";
 };
 
-$result = "{\"games\":" . $games . ",\"status\":" . $status.",\"total_games\":".$game_count.",\"last_db_update\":\"".$last_db_update."\"}";
+$result = "{\"games\":" . $games . ",\"status\":" . $status.",\"total_games\":".$game_count.",\"last_record_update\":\"".$last_record_update."\"}";
 print($result);
 
 //TODO:

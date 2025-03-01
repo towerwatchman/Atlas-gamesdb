@@ -8,10 +8,13 @@ from scraper.utils.packager import *
 from scraper.agents.dlsite import *
 
 #Vars
-f95_enable = True
+f95_enable = False
 f95_full_download = False
 dlsite_enable = False
 create_package = True
+
+start_time = time.time()
+
 #Check for input arguments and continue
 if len(sys.argv) > 1:
     if sys.argv[1] == 'true':
@@ -66,7 +69,7 @@ if dlsite_enable:
 # Package data based on date. As of right now it will output a full db dump.
 if create_package:
     print("Creating Package")
-    packager.createPackage(database_connection)
+    packager.createPackage(database_connection, start_time)
 
 print("All Updates Compelte")
 sys.exit()
