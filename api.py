@@ -19,15 +19,23 @@ start_time = time.time()
 if len(sys.argv) > 1:
     if sys.argv[1] == 'true':
         f95_enable = True
+    if sys.argv[1] == 'false':
+        f95_enable = False
 if len(sys.argv) > 2:
     if sys.argv[2] == 'true':
         f95_full_download = True
+    if sys.argv[2] == 'false':
+        f95_full_download = False
 if len(sys.argv) > 3:
     if sys.argv[3] == 'true':
         dlsite_enable = True
+    if sys.argv[3] == 'false':
+        dlsite_enable = False
 if len(sys.argv) > 4:
     if sys.argv[4] == 'true':
         create_package = True
+    if sys.argv[4] == 'false':
+        create_package = False
 if len(sys.argv) > 5:
     if sys.argv[5] == 'true':
         start_time = 0
