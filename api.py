@@ -28,6 +28,9 @@ if len(sys.argv) > 3:
 if len(sys.argv) > 4:
     if sys.argv[4] == 'true':
         create_package = True
+if len(sys.argv) > 5:
+    if sys.argv[5] == 'true':
+        start_time = 0
 
 
 # Set database type: local is pc (Windows), remote is server (Linux)
