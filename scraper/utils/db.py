@@ -18,6 +18,7 @@ def DeleteLocalDatabase():
 
 
 def TruncateLocalF95Table():
+    
     con = sl.connect(dbName)
     cursor = con.cursor()
     sql = """DELETE FROM f95zone_data"""
@@ -25,6 +26,26 @@ def TruncateLocalF95Table():
     con.commit()
     cursor.close()
 
+def TruncateLocalUpdatesTable():
+    if type == database.LOCAL:
+        con = sl.connect(dbName)
+        cursor = con.cursor()
+
+    elif type == database.REMOTE:
+        con = mysql.connector.connect(
+            user=config.user_readdonly(),
+            password=config.password_readonly(),
+            host=config.host(database.REMOTE),
+            database=config.database(),
+        )
+        cursor = con.cursor(prepared=True)
+
+    query = "DELETE FROM updates"
+
+    cursor.execute(query)  
+    con.commit()
+    cursor.close()
+    con.close()
 
 # -- Dynamic Functions --
 
