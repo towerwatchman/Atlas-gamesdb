@@ -26,7 +26,7 @@ def TruncateLocalF95Table():
     con.commit()
     cursor.close()
 
-def TruncateLocalUpdatesTable():
+def TruncateLocalUpdatesTable(type):
     if type == database.LOCAL:
         con = sl.connect(dbName)
         cursor = con.cursor()

@@ -14,6 +14,6 @@ else:
     print("Running Remote")
 
 #Delete all previous updates
-TruncateLocalUpdatesTable()
+TruncateLocalUpdatesTable(database_connection)
 #Create master update
 packager.createPackage(database_connection, 0)
