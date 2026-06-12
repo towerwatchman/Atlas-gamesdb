@@ -121,3 +121,16 @@ resolving every mirror on every scrape.
 
 The `scraper/fixtures/*.html` files are saved F95 pages used only for tests;
 delete them (and drop the `tests/` reference) if you don't want them in the repo.
+
+## Request pacing
+
+To avoid rate limiting, every F95 request (listing pages and per-thread detail
+fetches) waits a randomised interval rather than a fixed cadence. Tune it in
+`.env`:
+
+```dotenv
+F95_DELAY_MIN=2.0
+F95_DELAY_MAX=4.0
+```
+
+Failed-listing retries use a fixed 10s backoff.

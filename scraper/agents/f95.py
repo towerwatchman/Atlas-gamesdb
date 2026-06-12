@@ -8,6 +8,7 @@ Detail   : each new/updated thread page is fetched through an AUTHENTICATED
            spoiler sections) resolves. See scraper/agents/f95_detail.py.
 """
 import json
+import os
 import random
 import time
 
@@ -22,6 +23,16 @@ from scraper.utils.parser import parser
 from scraper.utils.db import (
     UpdatetableDynamic, findIdByTitle, getLastUpdate,
 )
+
+
+def _jitter():
+    """Sleep a randomised interval between requests to avoid a regular,
+    rate-limit-tripping cadence. Tunable via F95_DELAY_MIN / F95_DELAY_MAX."""
+    lo = float(os.environ.get("F95_DELAY_MIN", "2.0"))
+    hi = float(os.environ.get("F95_DELAY_MAX", "4.0"))
+    if hi < lo:
+        hi = lo
+    time.sleep(random.uniform(lo, hi))
 
 
 def baseURL():
@@ -77,7 +88,7 @@ class f95:
                     self._process_listing_item(element, db_type, full_detail)
                 except Exception as ex:   # keep going on a single bad row
                     print("item error:", ex)
-            time.sleep(random.uniform(1.0, 2.2))
+            _jitter()
 
     def _process_listing_item(self, element, db_type, full_detail):
         atlas = gameRecord.atlasRecord()
@@ -114,7 +125,7 @@ class f95:
 
     # ---- detail (authenticated) ---------------------------------------------
     def _fetch_detail(self, site_url, atlas, f95rec):
-        time.sleep(1)  # politeness
+        _jitter()  # politeness + jitter to avoid rate limiting
         r = self.session.get(site_url)
         if r.status_code != 200:
             print("detail fetch failed:", r.status_code, site_url)
