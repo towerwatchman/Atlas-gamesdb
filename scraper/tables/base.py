@@ -35,6 +35,7 @@ class query:
                     os TINYTEXT,
                     release_date BIGINT,
                     length TINYTEXT,
+                    external_ids LONGTEXT,
                     banner LONGTEXT,
                     banner_wide LONGTEXT,
                     cover LONGTEXT,
@@ -62,6 +63,9 @@ class query:
                     tags LONGTEXT,
                     rating DOUBLE,
                     screens LONGTEXT,
+                    downloads LONGTEXT,
+                    extras LONGTEXT,
+                    translations LONGTEXT,
                     replies INT,
                     FOREIGN KEY (atlas_id) REFERENCES atlas(atlas_id)
                 );

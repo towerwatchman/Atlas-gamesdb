@@ -1,10 +1,19 @@
-.vscode/
-data.db
-config.php
+# secrets & session
+.env
+f95_cookies.json
 dbCredentials.py
+config.php
+
+# python
 __pycache__/
-*.db
 *.pyc
+
+# data / output
+data.db
+*.db
 *.json
 *.update
 public_html/packages/
+
+# editor
+.vscode/

@@ -1,306 +1,199 @@
+"""
+Database access layer.
+
+LOCAL  -> SQLite (data.db, Windows dev box)
+REMOTE -> MySQL  (server)
+
+Refactor notes vs the original:
+  * One _connect() helper instead of ~8 copies of the connect block.
+  * Parameterised queries everywhere (no string-built WHERE clauses).
+  * Table names are whitelisted before being interpolated.
+  * MySQL upsert uses %s placeholders (the old code mixed ? and %s).
+  * Credentials come from the environment via config (no plaintext here).
+"""
 import os
 import sqlite3 as sl
-import requests
-import mysql.connector
 from pathlib import Path
-from scraper.tables.base import *
-from scraper.types.eTypes import *
-from scraper.config import *
+
+import mysql.connector
+
+from scraper.tables.base import query
+from scraper.types.eTypes import database
+from scraper.config import config
 
 dbName = "data.db"
 
+# Only these tables may be interpolated into SQL (defence against injection
+# via scraped data flowing into table/column positions).
+ALLOWED_TABLES = {
+    "atlas", "f95_zone", "updates", "dlsite", "dlsite_circle",
+    "lewdcorner", "sxs", "test",
+}
 
-# LOCAL DB MANIPULATION
-def DeleteLocalDatabase():
-    if Path((dbName)).is_file() == True:
-        print("Deleting Database")
+
+def _check_table(table):
+    if table not in ALLOWED_TABLES:
+        raise ValueError(f"Refusing to use non-whitelisted table name: {table!r}")
+    return table
+
+
+def _connect(db_type):
+    """Return (connection, paramstyle). paramstyle is '?' (sqlite) or '%s' (mysql)."""
+    if db_type == database.LOCAL:
+        return sl.connect(dbName), "?"
+    return (
+        mysql.connector.connect(
+            user=config.db_user(),
+            password=config.db_password(),
+            host=config.host(database.REMOTE.value),
+            database=config.database(),
+        ),
+        "%s",
+    )
+
+
+# ---------------------------------------------------------------- writes
+
+def UpdatetableDynamic(table, values, db_type):
+    """Upsert a dict of column->value into `table`."""
+    _check_table(table)
+    if not values:
+        return
+    con, ph = _connect(db_type)
+    try:
+        cols = list(values.keys())
+        col_sql = ", ".join(cols)
+        placeholders = ", ".join([ph] * len(cols))
+        params = [int(v) if isinstance(v, bool) else v for v in values.values()]
+
+        if db_type == database.LOCAL:
+            sql = f"INSERT OR REPLACE INTO {table} ({col_sql}) VALUES ({placeholders})"
+        else:
+            updates = ", ".join(f"{c}=VALUES({c})" for c in cols)
+            sql = (
+                f"INSERT INTO {table} ({col_sql}) VALUES ({placeholders}) "
+                f"ON DUPLICATE KEY UPDATE {updates}"
+            )
+        cur = con.cursor()
+        cur.execute(sql, params)
+        con.commit()
+        cur.close()
+    finally:
+        con.close()
+
+
+def TruncateLocalUpdatesTable(db_type):
+    con, _ = _connect(db_type)
+    try:
+        cur = con.cursor()
+        cur.execute("DELETE FROM updates")
+        con.commit()
+        cur.close()
+    finally:
+        con.close()
+
+
+# ---------------------------------------------------------------- schema
+
+def CreateDatabase(db_type):
+    con, _ = _connect(db_type)
+    try:
+        cur = con.cursor()
+        for stmt in (
+            query.createAtlasTable(db_type),
+            query.createF95Table(db_type),
+            query.createUpdateTable(db_type),
+            query.createDlsiteCircleTable(db_type),
+            query.createDlsiteTable(db_type),
+            query.createLewdcornereTable(db_type),
+            query.createSxsTable(db_type),
+        ):
+            cur.execute(stmt)
+        con.commit()
+        cur.close()
+    finally:
+        con.close()
+
+
+def DeleteTables(db_type):
+    con, _ = _connect(db_type)
+    try:
+        cur = con.cursor()
+        for t in ("atlas", "test", "f95_zone"):
+            cur.execute(query.deleteTable(_check_table(t)))
+        con.commit()
+        cur.close()
+    finally:
+        con.close()
+
+
+def DeleteDatabase(db_type):
+    if db_type == database.LOCAL and Path(dbName).is_file():
         os.remove(dbName)
 
 
-def TruncateLocalF95Table():
-    
-    con = sl.connect(dbName)
-    cursor = con.cursor()
-    sql = """DELETE FROM f95zone_data"""
-    cursor.execute(sql)
-    con.commit()
-    cursor.close()
+# ---------------------------------------------------------------- reads
 
-def TruncateLocalUpdatesTable(type):
-    if type == database.LOCAL:
-        con = sl.connect(dbName)
-        cursor = con.cursor()
-
-    elif type == database.REMOTE:
-        con = mysql.connector.connect(
-            user=config.user_readdonly(),
-            password=config.password_readonly(),
-            host=config.host(database.REMOTE),
-            database=config.database(),
+def getLastUpdate(db_type, f95_id):
+    con, ph = _connect(db_type)
+    try:
+        cur = con.cursor()
+        cur.execute(
+            f"SELECT last_thread_comment FROM f95_zone WHERE f95_id = {ph}",
+            (f95_id,),
         )
-        cursor = con.cursor(prepared=True)
-
-    query = "DELETE FROM updates"
-
-    cursor.execute(query)  
-    con.commit()
-    cursor.close()
-    con.close()
-
-# -- Dynamic Functions --
+        row = cur.fetchone()
+        cur.close()
+        return row[0] if row and row[0] is not None else 0
+    finally:
+        con.close()
 
 
-def UpdatetableDynamic(table, values, type):
-    columns = ", ".join(values.keys())
-    placeholders = ", ".join("?" * len(values))
-    sql = ""
-    data = ""
-
-    if type == database.LOCAL:
-        con = sl.connect(dbName)
-        cursor = con.cursor()
-        sql = (
-            "INSERT OR REPLACE INTO "
-            + table
-            + " ({}) VALUES ({})".format(columns, placeholders)
-        )
-    elif type == database.REMOTE:
-        con = mysql.connector.connect(
-            user=config.user_readdonly(),
-            password=config.password_readonly(),
-            host=config.host(database.REMOTE),
-            database=config.database(),
-        )
-        cursor = con.cursor(prepared=True)
-        sql = (
-            "INSERT INTO "
-            + table
-            + " ({}) VALUES ({}) ON DUPLICATE KEY UPDATE ".format(columns, placeholders)
-        )
-        for id, value in enumerate(values):
-            data += value + "=VALUES(" + value + ")"
-            if id + 1 < len(values):
-                data += ","
-
-        # print(data)
-
-        # values = [int(x) if isinstance(x, bool) else x for x in values: x]
-    values = [int(x) if isinstance(x, bool) else x for x in values.values()]
-    # print(sql)
-    sql = sql + data
-    # print(sql)
-    # print(values)
-    cursor.execute(sql, values)
-    con.commit()
-    cursor.close()
-    con.close()
+def findIdByTitle(table, id_name, db_type):
+    _check_table(table)
+    con, ph = _connect(db_type)
+    try:
+        cur = con.cursor()
+        cur.execute(f"SELECT atlas_id FROM {table} WHERE id_name = {ph}", (id_name,))
+        row = cur.fetchone()
+        cur.close()
+        return row[0] if row else 0
+    finally:
+        con.close()
 
 
-def CreateDatabase(type):
-    # Local
-    if type == database.LOCAL:
-        if Path((dbName)).is_file() == False:
-            print("Creating Local Database")
+def findDlsiteMaker(table, circle_id, db_type):
+    _check_table(table)
+    con, ph = _connect(db_type)
+    try:
+        cur = con.cursor()
+        cur.execute(f"SELECT name FROM {table} WHERE circle_id = {ph}", (circle_id,))
+        row = cur.fetchone()
+        cur.close()
+        return row[0] if row else 0
+    finally:
+        con.close()
+
+
+def downloadBase(db_type, table, start_time):
+    _check_table(table)
+    con, ph = _connect(db_type)
+    try:
+        if db_type == database.LOCAL:
+            con.row_factory = dict_factory
+            cur = con.cursor()
         else:
-            print("Local Database Exist")
-        con = sl.connect(dbName)
-        with con:
-            # con.execute(query.createIdSequence(database.LOCAL))
-            con.execute(query.createAtlasTable(database.LOCAL))
-            con.execute(query.createF95Table(database.LOCAL))
-            con.execute(query.createUpdateTable(database.LOCAL))
-            con.execute(query.createDlsiteCircleTable(database.LOCAL))
-            con.execute(query.createDlsiteTable(database.LOCAL))
-            con.execute(query.createLewdcornereTable(database.REMOTE))
-            con.execute(query.createSxsTable(database.REMOTE))
+            cur = con.cursor(dictionary=True)
+        cur.execute(
+            f"SELECT * FROM {table} WHERE last_record_update > {ph} ORDER BY atlas_id",
+            (start_time,),
+        )
+        data = cur.fetchall()
+        cur.close()
+        return data
+    finally:
         con.close()
-    # Remote
-    elif type == database.REMOTE:
-        cnx = mysql.connector.connect(
-            user=config.user_readdonly(),
-            password=config.password_readonly(),
-            host=config.host(database.REMOTE),
-            database=config.database(),
-        )
-        print("Creating Remote Database")
-        con = cnx.cursor()
-        with con:
-            # con.execute(query.createIdSequence(database.REMOTE))
-            con.execute(query.createAtlasTable(database.REMOTE))
-            con.execute(query.createF95Table(database.REMOTE))
-            con.execute(query.createUpdateTable(database.REMOTE))
-            con.execute(query.createDlsiteCircleTable(database.REMOTE))
-            con.execute(query.createDlsiteTable(database.REMOTE))
-            con.execute(query.createLewdcornereTable(database.REMOTE))
-            con.execute(query.createSxsTable(database.REMOTE))
-
-        con.close()
-
-
-def getLastUsedId(type):
-    if type == database.LOCAL:
-        con = sl.connect(dbName)
-        cursor = con.cursor()
-
-    elif type == database.REMOTE:
-        con = mysql.connector.connect(
-            user=config.user_readdonly(),
-            password=config.password_readonly(),
-            host=config.host(database.REMOTE),
-            database=config.database(),
-        )
-        cursor = con.cursor(prepared=True)
-
-    query = "SELECT id FROM id_sequence"
-
-    cursor.execute(query)
-    id = cursor.fetchone()
-    # cursor.close()
-    if id == None:
-        id = 0
-    else:
-        id = id[0]
-    return id
-
-def getLastUpdate(type, id):
-    if type == database.LOCAL:
-        con = sl.connect(dbName)
-        cursor = con.cursor()
-
-    elif type == database.REMOTE:
-        con = mysql.connector.connect(
-            user=config.user_readdonly(),
-            password=config.password_readonly(),
-            host=config.host(database.REMOTE),
-            database=config.database(),
-        )
-        cursor = con.cursor(prepared=True)
-
-    query = "SELECT last_thread_comment FROM f95_zone where f95_id = " + id
-
-    cursor.execute(query)
-    last_update = cursor.fetchone()
-    cursor.close()
-    con.close()
-    if last_update == None:
-        last_update = 0
-    else:
-        last_update = last_update[0]
-    return last_update
-
-
-def DeleteTables(type):
-    # Local
-    if type == database.LOCAL:
-        if Path((dbName)).is_file() == True:
-            print("Deleting Local Tables")
-            con = sl.connect(dbName)
-            with con:
-                con.execute(query.deleteTable("atlas"))
-                con.execute(query.deleteTable("test"))
-                con.execute(query.deleteTable("f95_zone_data"))
-    if type == database.REMOTE:
-        cnx = mysql.connector.connect(
-            user=config.user_readdonly(),
-            password=config.password_readonly(),
-            host=config.host(database.REMOTE),
-            database=config.database(),
-        )
-        print("Deleting Remote Tables")
-        con = cnx.cursor()
-        with con:
-            con.execute(query.deleteTable("atlas"))
-            con.execute(query.deleteTable("test"))
-            con.execute(query.deleteTable("f95_zone_data"))
-        cnx.close()
-
-
-def DeleteDatabase(type):
-    # Local
-    if type == database.LOCAL:
-        if Path((dbName)).is_file() == True:
-            print("Deleting Local Database")
-            os.remove(dbName)
-
-
-def findIdByTitle(table, id_name, type):
-    if type == database.LOCAL:
-        con = sl.connect(dbName)
-        con.row_factory = sl.Row
-        cursor = con.cursor()
-
-    elif type == database.REMOTE:
-        con = mysql.connector.connect(
-            user=config.user_readdonly(),
-            password=config.password_readonly(),
-            host=config.host(database.REMOTE),
-            database=config.database(),
-        )
-        cursor = con.cursor(prepared=True)
-
-    query = "SELECT atlas_id FROM " + table + ' WHERE id_name = "' + id_name + '"'
-
-    cursor.execute(query)
-    id = cursor.fetchone()
-    # cursor.close()
-    if id == None:
-        return 0
-    else:
-        return id[0]
-
-
-def findDlsiteMaker(table, id, type):
-    if type == database.LOCAL:
-        con = sl.connect(dbName)
-        con.row_factory = sl.Row
-        cursor = con.cursor()
-
-    elif type == database.REMOTE:
-        con = mysql.connector.connect(
-            user=config.user_readdonly(),
-            password=config.password_readonly(),
-            host=config.host(database.REMOTE),
-            database=config.database(),
-        )
-        cursor = con.cursor(prepared=True)
-
-    query = "SELECT name FROM " + table + ' WHERE circle_id = "' + id + '"'
-
-    cursor.execute(query)
-    id = cursor.fetchone()
-    # cursor.close()
-    if id == None:
-        return 0
-    else:
-        return id[0]
-
-
-def downloadBase(type, table, start_time):
-    if type == database.LOCAL:
-        con = sl.connect(dbName)
-        con.row_factory = dict_factory
-        cursor = con.cursor()
-
-    elif type == database.REMOTE:
-        con = mysql.connector.connect(
-            user=config.user_readdonly(),
-            password=config.password_readonly(),
-            host=config.host(database.REMOTE),
-            database=config.database(),
-        )
-        cursor = con.cursor(dictionary=True)
-
-    query = "SELECT * FROM " + table + " WHERE last_record_update > " + str(start_time) + " ORDER BY atlas_id"
-
-    cursor.execute(query)
-    data = cursor.fetchall()
-    cursor.close()
-    con.close()
-    return data
 
 
 def dict_factory(cursor, row):
-    d = {}
-    for idx, col in enumerate(cursor.description):
-        d[col[0]] = row[idx]
-    return d
+    return {col[0]: row[idx] for idx, col in enumerate(cursor.description)}

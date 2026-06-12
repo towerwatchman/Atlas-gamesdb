@@ -1,471 +1,168 @@
-import requests
-import json
-from urllib.request import urlopen
-from bs4 import BeautifulSoup
-from datetime import datetime
-from scraper.utils.parser import *
-from scraper.utils.db import *
-from scraper.datatypes.record import *
-from scraper.utils.epoch import *
-from datetime import datetime
-import random
-from threading import Thread
-import pandas as pd
-import sys
+"""
+F95 scraper.
 
+Listing  : public forum listing at /forums/games.2/ (unchanged approach;
+           login is not required to enumerate threads).
+Detail   : each new/updated thread page is fetched through an AUTHENTICATED
+           session so the guest-gated content (external IDs, downloads,
+           spoiler sections) resolves. See scraper/agents/f95_detail.py.
+"""
+import json
+import random
 import time
 
-# TEST URL: https://f95zone.to/threads/the-necromancer-arises-prologue-whiteleaf-studio.154250/
-# TEST JSON: https://f95zone.to/sam/latest_alpha/latest_data.php?cmd=list&cat=games&page=1&sort=date&rows=90
+import requests
+from bs4 import BeautifulSoup
+
+from scraper.auth import F95Session
+from scraper.agents.f95_detail import parse_thread_detail
+from scraper.datatypes.record import gameRecord
+from scraper.utils.epoch import epoch
+from scraper.utils.parser import parser
+from scraper.utils.db import (
+    UpdatetableDynamic, findIdByTitle, getLastUpdate,
+)
 
 
 def baseURL():
     return "https://f95zone.to/forums/games.2/"
 
-def baseJsonURL():
-    #&page=1&sort=date&rows=90
-    return "https://f95zone.to/sam/latest_alpha/latest_data.php?cmd=list&cat=games"
-
 
 class f95:
-    def __init__(self) -> None:
-        pass
+    def __init__(self, session=None):
+        # A single authenticated session is reused for the whole run; the
+        # cookie is loaded from disk and only refreshed when it expires.
+        self.session = session or F95Session()
 
-    def findGameByID(id):
-        print(id)
-
-    def getThreadPageCount():
-        request = requests.get(baseURL())
-        if request.status_code == 200:
-            page = BeautifulSoup(request.content, "html.parser")
-            tmp = page.select("div.pageNavSimple")[0].find_all("a")[0].text.strip()
-            total_pages = tmp.upper().split("OF")[1]
-            return int(total_pages)
-        else:
-            print(request.status_code)
+    # ---- listing (public) ---------------------------------------------------
+    def getThreadPageCount(self):
+        r = requests.get(baseURL(), headers=self.session.session.headers, timeout=30)
+        if r.status_code != 200:
+            print("Listing page error:", r.status_code)
             return 0
-    
-    def getLatestPageCount():
-        request = requests.get(baseJsonURL() + "&page=1&sort=date&rows=90")
-        if request.status_code == 200:
-            data = request.json()
-            total_pages = data["msg"]["pagination"]["total"]
-            return int(total_pages)
-        else:
-            print(request.status_code)
+        page = BeautifulSoup(r.content, "lxml")
+        nav = page.select("div.pageNavSimple")
+        if not nav:
             return 0
+        text = nav[0].find_all("a")[0].text.strip()
+        return int(text.upper().split("OF")[1])
 
-    def downloadThreadSummary(self, type, include_game_info, db_type):
-        # need to do a check, if there are 0 total pages then wait. It means they are doing a db backup
-        # Start remote connection
-        # assign records     
+    # ---- main run -----------------------------------------------------------
+    def run(self, db_type, full_detail=False, max_pages=None):
+        # Authenticate up front so we fail fast on bad credentials.
+        self.session.ensure_authenticated()
 
-        pages = self.getThreadPageCount()
-        print(
-            "Staring download from F95",
-            "\nDownload type:",
-            type,
-            "\nInclude Game Metadata:",
-            include_game_info,
-            "\n",
-            pages,
-            "total pages",
+        total = self.getThreadPageCount()
+        pages = min(total, max_pages) if max_pages else total
+        print(f"F95: {total} listing pages (processing {pages})")
+
+        for page_no in range(1, pages + 1):
+            print(f"---- listing page {page_no} ----")
+            url = baseURL() + ("?order=post_date&direction=desc" if page_no == 1
+                               else f"page-{page_no}?order=post_date&direction=desc")
+            try:
+                r = requests.get(url, headers=self.session.session.headers, timeout=30)
+            except requests.RequestException as ex:
+                print("listing fetch failed:", ex)
+                time.sleep(10)
+                continue
+            if r.status_code != 200:
+                print("listing timeout, waiting 10s")
+                time.sleep(10)
+                continue
+
+            html = BeautifulSoup(r.content, "lxml")
+            for element in html.find_all("div", class_="structItem"):
+                try:
+                    self._process_listing_item(element, db_type, full_detail)
+                except Exception as ex:   # keep going on a single bad row
+                    print("item error:", ex)
+            time.sleep(random.uniform(1.0, 2.2))
+
+    def _process_listing_item(self, element, db_type, full_detail):
+        atlas = gameRecord.atlasRecord()
+        f95rec = gameRecord.f95Record()
+
+        title_links = element.select("div.structItem-title")[0].find_all("a")
+        parser.ParseThreadItem(title_links, atlas, f95rec)
+        if atlas.get("category") == "README":
+            return
+
+        f95rec["thread_publish_date"] = epoch.ConvertToUnixTime(
+            element.select("li.structItem-startDate")[0].find_all("a")[0]
+            .select("time")[0]["datetime"].replace("T", " ")[:-5]
         )
-        # Get total page count and ittereate through them
-        counter = 0
-        for item in range(1, self.getThreadPageCount() + 1):
-            try:
-                # Page manipulation
-                print("---- Starting Page:", str(item), "----")
-                if item > 1:
-                    URL = (
-                        baseURL()
-                        + "page-"
-                        + str(item)
-                        + "?order=post_date&direction=desc"
-                    )
-                else:
-                    URL = baseURL() + "?order=post_date&direction=desc"
-
-                # First attempt to get url
-                page = requests.get(URL)
-                if page.status_code == 200:
-                    html = BeautifulSoup(page.content, "html.parser")
-                    #Get each item from page
-                    elements = html.find_all("div", class_="structItem")
-                    # each element is an Item thread on 1 page. Each page will have 20 items
-                    thread_id = 0
-                    for element in elements:
-                        #reset records
-                        atlasRecord = gameRecord.atlasRecord()
-                        f95Record = gameRecord.f95Record()   
-                        thread_items = element.select("div.structItem-title")[
-                            0
-                        ].find_all("a")
-                        parser.ParseThreadItem(thread_items, atlasRecord, f95Record)
-                        #print(atlasRecord["status"])
-                        f95Record["thread_publish_date"] = epoch.ConvertToUnixTime(
-                            element.select("li.structItem-startDate")[0]
-                            .find_all("a")[0]
-                            .select("time")[0]["datetime"]
-                            .replace("T", " ")[:-5]
-                        )
-                        f95Record["last_thread_comment"] = epoch.ConvertToUnixTime(
-                            parser.ParseDateTimeItem(
-                                element.select("time.structItem-latestDate")
-                            )
-                        )
-                        f95Record["last_record_update"] = int(time.time())
-                        f95Record["replies"] = parser.ParseReplies(element)
-                        f95Record["views"] = parser.ParseViews(element)
-                        f95Record["rating"] = parser.ParseRating(element)
-                        atlasRecord["last_record_update"] = int(time.time())
-                        try:
-                            if atlasRecord["category"] != "README":
-                                counter += 1
-                                last_update = int(getLastUpdate(db_type, f95Record["f95_id"]))
-                                #print(last_update)
-                                if  (int(f95Record["last_thread_comment"]) > last_update) or last_update == 0:
-                                #if include_game_info:
-                                    print(
-                                        "getting details for id:" + f95Record["f95_id"]
-                                    )
-                                    Titem = self.downloadThreadDetails(
-                                        self, atlasRecord, f95Record
-                                    )
-                                    f95Record["banner_url"] = Titem["banner_url"]
-                                    atlasRecord["overview"] = Titem["overview"]
-                                    atlasRecord["release_date"] = Titem["release_date"]
-                                    atlasRecord["censored"] = Titem["censored"]
-                                    atlasRecord["language"] = Titem["language"]
-                                    f95Record["likes"] = Titem["likes"]
-                                    atlasRecord["translations"] = Titem["translations"]
-                                    atlasRecord["length"] = Titem["length"]
-                                    # Titem["vndb"] = Titem["vndb"]
-                                    atlasRecord["voice"] = Titem["voice"]
-                                    atlasRecord["os"] = Titem["os"]
-                                    f95Record["tags"] = Titem["tags"]
-                                    f95Record["screens"] = Titem["screens"]
-                                else:
-                                    break    
-                                self.updateRecord(
-                                    f95,
-                                    "atlas",
-                                    self.formatDictionary(atlasRecord),
-                                    self.formatDictionary(f95Record),
-                                    db_type,
-                                    thread_id,
-                                )
-
-                        except Exception as ex:
-                            print(ex)
-                            continue
-
-                        # last_thread_update = datetime.strptime(Titem['last_thread_update'].replace("T"," ")[:-5], '%Y-%m-%d %H:%M:%S')
-                        # print(last_thread_update ,">", last_record_update)
-                        # if last_thread_update >last_record_update:
-                        # print(Titem)
-                    # sys.exit()
-
-                    # print(Titem.keys())
-                    if not include_game_info:
-                        time.sleep(random.uniform(1.0, 2.2))
-                    # break;
-
-                    # for t in threads:
-                    #    t.join()
-                else:
-                    print("Page Timeout Error, Waiting 10 seconds")
-                    time.sleep(10)
-            except Exception as ex:
-                print(ex)
-
-    def downloadThreadDetails(self, aRecord, fRecord):
-        time.sleep(1)  # wait another sec before getting individual page info
-        Titem = {
-            "banner_url": "",
-            "overview": "",
-            "release_date": "",
-            "censored": "",
-            "language": "",
-            "translations": "",
-            "length": "",
-            "vndb": "",
-            "voice": "",
-            "os": "",
-            "tags": "",
-            "screens": "",
-            "likes": "",
-        }
-
-        site_url = fRecord["site_url"]
-        banner_url = ""
-        overview = ""
-        release_date = ""
-        censored = ""
-        language = ""
-        translations = ""
-        length = ""
-        vndb = ""
-        voice = ""
-        os = ""
-        tags = ""
-        screens = ""
-        likes = ""
-
-        # HERE IS WHERE WE LOAD THE INDIVIDUAL PAGE TO SCRAPE ADDITIONAL DATA
-        gpage = requests.get(site_url)
-        if gpage.status_code == 200:
-            gsoup = BeautifulSoup(gpage.content, "html.parser")
-            job_elements = gsoup.find_all("div", class_="bbWrapper")
-            # title = gsoup.select('h1.p-title-value')[0].text.strip()
-
-            try:
-                overview = (
-                    job_elements[0]
-                    .find_all("div")[0]
-                    .get_text()
-                    .replace("Overview:", "")
-                    .strip()
-                )
-                if len(overview) <= 2:
-                    overview = (
-                        job_elements[0]
-                        .find_all("div")[1]
-                        .get_text()
-                        .replace("Overview:", "")
-                        .strip()
-                    )
-                overview = overview.split("\n\n\n", 1)[0]
-            except:
-                overview = ""
-
-            try:
-                # this is wrong change to taglist
-                taglist = gsoup.select("span.js-tagList")[0].find_all("a")
-                tags = ""
-                for g in taglist:
-                    tmp = g.text.strip()
-                    if tags == "":
-                        # first element
-                        tags = tmp
-                    else:
-                        tags = tags + "," + tmp
-            except:
-                tags = ""
-            # Likes
-            try:
-                userExtras = gsoup.find("div", class_="message-userExtras").find_all(
-                    "dd"
-                )
-                likes = userExtras[2].get_text().replace(",","")
-            except:
-                likes = ""
-            # Screenshots
-            alinks = job_elements[0].find_all("a")
-            # skip first item since we know that it is banner image
-            screens = ""
-            for link in alinks:
-                try:
-                    img = str(link["href"])
-                    if "attachments" in img:
-                        if screens == "":
-                            screens = link["href"]
-                        else:
-                            screens = screens + "," + link["href"]
-                except Exception:
-                    pass
-
-                try:
-                    banner_url = gsoup.find_all("img", class_="bbImage")[0]["src"]
-                    banner_url = banner_url.replace("/thumb/", "/")
-                except:
-                    banner_url = ""
-
-                try:
-                    release_date = (
-                        job_elements[0]
-                        .find("b", text="Release Date")
-                        .next_sibling.strip()
-                        .replace(":", "")
-                        .strip()
-                    )
-                except:
-                    try:
-                        release_date = (
-                            job_elements[0]
-                            .find("b", text="Year:")
-                            .next_sibling.strip()
-                            .replace(":", "")
-                            .strip()
-                        )
-                    except:
-                        release_date = ""
-
-                try:
-                    censored = (
-                        job_elements[0]
-                        .find("b", text="Censored")
-                        .next_sibling.strip()
-                        .replace(":", "")
-                        .strip()
-                    )
-
-                except:
-                    try:
-                        censored = (
-                            job_elements[0]
-                            .find("b", text="Censored:")
-                            .next_sibling.strip()
-                            .replace(":", "")
-                            .strip()
-                        )
-                    except:
-                        try:
-                            censored = (
-                                job_elements[0]
-                                .find("b", text="Censorship:")
-                                .next_sibling.strip()
-                                .replace(":", "")
-                                .strip()
-                            )
-                        except:
-                            censored = ""
-
-                try:
-                    os = (
-                        job_elements[0]
-                        .find("b", text="OS")
-                        .next_sibling.strip()
-                        .replace(":", "")
-                        .strip()
-                    )
-                except:
-                    try:
-                        os = (
-                            job_elements[0]
-                            .find("b", text="Platforms:")
-                            .next_sibling.strip()
-                            .replace(":", "")
-                            .strip()
-                        )
-                    except:
-                        os = ""
-
-                try:
-                    language = (
-                        job_elements[0]
-                        .find("b", text="Language")
-                        .next_sibling.strip()
-                        .replace(":", "")
-                        .strip()
-                    )
-                except:
-                    try:
-                        language = (
-                            job_elements[0]
-                            .find("b", text="Language:")
-                            .next_sibling.strip()
-                            .replace(":", "")
-                            .strip()
-                        )
-                    except:
-                        language = ""
-
-                try:
-                    translations = (
-                        job_elements[0]
-                        .find("b", text="Translations:")
-                        .next_sibling.strip()
-                        .replace(":", "")
-                        .strip()
-                    )
-                except:
-                    translations = ""
-
-                try:
-                    length = (
-                        job_elements[0]
-                        .find("b", text="Length")
-                        .next_sibling.strip()
-                        .replace(":", "")
-                        .strip()
-                    )
-                except:
-                    try:
-                        length = (
-                            job_elements[0]
-                            .find("b", text="Length:")
-                            .next_sibling.strip()
-                            .replace(":", "")
-                            .strip()
-                        )
-                    except:
-                        length = ""
-
-                try:
-                    voice = (
-                        job_elements[0]
-                        .find("b", text="Voice")
-                        .next_sibling.strip()
-                        .replace(":", "")
-                        .strip()
-                    )
-                except:
-                    try:
-                        voice = (
-                            job_elements[0]
-                            .find("b", text="Voice:")
-                            .next_sibling.strip()
-                            .replace(":", "")
-                            .strip()
-                        )
-                    except:
-                        voice = ""
-
-                try:
-                    vndb = (
-                        job_elements[0]
-                        .find("b", text="VNDB:")
-                        .next_sibling.strip()
-                        .replace(":", "")
-                        .strip()
-                    )
-                except:
-                    vndb = ""
-
-            # Store data in dict and return dict
-            Titem["banner_url"] = banner_url
-            Titem["overview"] = overview
-            # print(epoch.ConvertToUnixTime(release_date))
-            Titem["release_date"] = epoch.ConvertToUnixTime(release_date)
-            Titem["censored"] = censored
-            Titem["language"] = language
-            Titem["translations"] = translations
-            Titem["length"] = length
-            Titem["vndb"] = vndb
-            Titem["voice"] = voice
-            Titem["os"] = os
-            Titem["tags"] = tags
-            Titem["screens"] = screens
-            Titem["likes"] = likes
-        return Titem
-  
-    def formatDictionary(data):
-        data = {k: v for k, v in data.items() if v}
-        return data
-
-    def updateRecord(self, table, aRecord, fRecord, db_type, thread_id):
-        UpdatetableDynamic(table, aRecord, db_type)
-        #print(aRecord)
-        id = findIdByTitle(table, aRecord["id_name"], db_type)
-        #print(id)
-        fRecord["atlas_id"] = id
-        #print(fRecord)
-        UpdatetableDynamic("f95_zone", fRecord, db_type)
-        print(
-            "Database update completed for f95_id:",
-            fRecord["f95_id"],
-            " on thread:",
-            thread_id,
+        f95rec["last_thread_comment"] = epoch.ConvertToUnixTime(
+            parser.ParseDateTimeItem(element.select("time.structItem-latestDate"))
         )
+        f95rec["last_record_update"] = int(time.time())
+        f95rec["replies"] = parser.ParseReplies(element)
+        f95rec["views"] = parser.ParseViews(element)
+        f95rec["rating"] = parser.ParseRating(element)
+        atlas["last_record_update"] = int(time.time())
+
+        last_update = int(getLastUpdate(db_type, f95rec["f95_id"]))
+        is_new = last_update == 0
+        is_updated = int(f95rec["last_thread_comment"] or 0) > last_update
+        if not (is_new or is_updated or full_detail):
+            return
+
+        print("detail:", f95rec["f95_id"], atlas.get("title"))
+        self._fetch_detail(f95rec["site_url"], atlas, f95rec)
+
+        self._update_record(atlas, f95rec, db_type)
+
+    # ---- detail (authenticated) ---------------------------------------------
+    def _fetch_detail(self, site_url, atlas, f95rec):
+        time.sleep(1)  # politeness
+        r = self.session.get(site_url)
+        if r.status_code != 200:
+            print("detail fetch failed:", r.status_code, site_url)
+            return
+        d = parse_thread_detail(r.text)
+
+        if d.get("logged_in") is False:
+            # Session died and re-login failed; skip rather than store guest data.
+            print("WARNING: not logged in for", site_url, "- skipping gated fields")
+
+        # f95-specific
+        if d.get("cover_url"):
+            f95rec["banner_url"] = d["cover_url"]
+        if d.get("screens"):
+            f95rec["screens"] = ",".join(d["screens"])
+        if d.get("tags"):
+            f95rec["tags"] = ",".join(d["tags"])
+        if d.get("downloads"):
+            f95rec["downloads"] = json.dumps(d["downloads"], ensure_ascii=False)
+        if d.get("extras"):
+            f95rec["extras"] = json.dumps(d["extras"], ensure_ascii=False)
+        if d.get("translations"):
+            f95rec["translations"] = json.dumps(d["translations"], ensure_ascii=False)
+        if d.get("likes") is not None:
+            f95rec["likes"] = d.get("likes")
+
+        # canonical / atlas
+        atlas["overview"] = d.get("overview", "")
+        atlas["censored"] = d.get("censored", "")
+        atlas["language"] = d.get("language", "")
+        atlas["os"] = d.get("os", "")
+        atlas["length"] = d.get("length", "")
+        atlas["voice"] = d.get("voice", "")
+        if d.get("release_date"):
+            atlas["release_date"] = epoch.ConvertToUnixTime(d["release_date"])
+
+        ext = d.get("external_ids", {})
+        if ext:
+            atlas["external_ids"] = json.dumps(ext, ensure_ascii=False)
+
+    # ---- persistence --------------------------------------------------------
+    @staticmethod
+    def _clean(d):
+        return {k: v for k, v in d.items() if v}
+
+    def _update_record(self, atlas, f95rec, db_type):
+        UpdatetableDynamic("atlas", self._clean(atlas), db_type)
+        atlas_id = findIdByTitle("atlas", atlas["id_name"], db_type)
+        f95rec["atlas_id"] = atlas_id
+        UpdatetableDynamic("f95_zone", self._clean(f95rec), db_type)
+        print("  stored f95_id", f95rec["f95_id"], "-> atlas_id", atlas_id)

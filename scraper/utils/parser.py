@@ -23,7 +23,7 @@ class parser:
                 atlasRecord["title"] = strings[0].replace("[", "").replace("]", "")
                 if len(strings) == 2:
                     tmp = re.sub(
-                        "[\W_]+",
+                        r"[\W_]+",
                         "",
                         strings[1].strip().replace("[", "").replace("]", ""),
                     ).upper()
@@ -44,14 +44,14 @@ class parser:
                     )
 
                 f95Record["f95_id"] = re.sub(
-                    "[\W_]+",
+                    r"[\W_]+",
                     "",
                     f95Record["site_url"].split(".")[
                         len(f95Record["site_url"].split(".")) - 1
                     ],
                 )
                 atlasRecord["short_name"] = re.sub(
-                    "[\W_]+",
+                    r"[\W_]+",
                     "",
                     atlasRecord["title"].strip().replace(" ", ""),
                 ).upper()
@@ -80,30 +80,24 @@ class parser:
 
     def ParseViews(element):
         try:
-            #init count
-            count = 0    
             tmp = element.select("div.structItem-cell--meta")[0].find_all("dl")[1].select("dd")[0].text
-            count = re.sub('\D', '', tmp) #remove all chars
-            if "k" in tmp:
-                count = count * 1000
-            if "m" in tmp:
-                count = count * 100000000
+            count = int(re.sub(r'\D', '', tmp) or 0)
+            if "k" in tmp.lower():
+                count *= 1000
+            if "m" in tmp.lower():
+                count *= 1000000
             return count
-           
-        except:
+        except Exception:
             return 0
 
     def ParseReplies(element):
-        try:     
-            #init count
-            count = 0       
+        try:
             tmp = element.select("div.structItem-cell--meta")[0].find_all("dl")[0].select("dd")[0].text
-            count = re.sub('\D', '', tmp) #remove all chars
-            if "k" in tmp:
-                count = count * 1000
-            if "m" in tmp:
-                count = count * 100000000
+            count = int(re.sub(r'\D', '', tmp) or 0)
+            if "k" in tmp.lower():
+                count *= 1000
+            if "m" in tmp.lower():
+                count *= 1000000
             return count
-            
-        except:
+        except Exception:
             return 0

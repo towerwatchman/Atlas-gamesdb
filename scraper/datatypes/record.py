@@ -29,6 +29,7 @@ class gameRecord:
             "os": "",
             "release_date": "",
             "length": "",
+            "external_ids": "",
             "banner": "",
             "banner_Wide": "",
             "cover": "",
@@ -47,6 +48,9 @@ class gameRecord:
             "site_url":"",
             "views":"",
             "likes": "",
-            "tags":""
+            "tags":"",
+            "downloads":"",
+            "extras":"",
+            "translations":"",
         }
         return Titem

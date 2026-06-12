@@ -1,3 +1,0 @@
-/phaser.js
-phaser.js
-assets/lib/phaser/phaser.js

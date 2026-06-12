@@ -1,87 +1,70 @@
-import asyncio
+"""
+Main entry point.
+
+Usage:
+    python api.py [f95] [full] [dlsite] [package]
+each optional arg is 'true'/'false' (positional, matching the old CLI).
+
+Flow:
+    1. pick LOCAL (Windows) vs REMOTE (Linux server) DB
+    2. ensure output dirs + DB schema
+    3. scrape enabled sources (F95 detail fetches are authenticated)
+    4. build the downloadable package (base + daily update + backups)
+"""
 import sys
+import time
 from sys import platform
-from scraper.agents.f95 import *
-from scraper.utils.directory_manager import *
-from scraper.types.eTypes import *
-from scraper.utils.packager import *
-from scraper.agents.dlsite import *
 
-#Vars
-f95_enable = True
-f95_full_download = False
-dlsite_enable = False
-create_package = True
-
-start_time = time.time()
-
-#Check for input arguments and continue
-if len(sys.argv) > 1:
-    if sys.argv[1] == 'true':
-        f95_enable = True
-    if sys.argv[1] == 'false':
-        f95_enable = False
-if len(sys.argv) > 2:
-    if sys.argv[2] == 'true':
-        f95_full_download = True
-    if sys.argv[2] == 'false':
-        f95_full_download = False
-if len(sys.argv) > 3:
-    if sys.argv[3] == 'true':
-        dlsite_enable = True
-    if sys.argv[3] == 'false':
-        dlsite_enable = False
-if len(sys.argv) > 4:
-    if sys.argv[4] == 'true':
-        create_package = True
-    if sys.argv[4] == 'false':
-        create_package = False
-if len(sys.argv) > 5:
-    if sys.argv[5] == 'true':
-        start_time = 0
+from scraper.types.eTypes import database
+from scraper.config import config
+from scraper.utils.directory_manager import createDirectories
+from scraper.utils.db import CreateDatabase
+from scraper.utils.packager import packager
+from scraper.auth import F95Session
+from scraper.agents.f95 import f95
+from scraper.agents.dlsite import dlsite
 
 
-# Set database type: local is pc (Windows), remote is server (Linux)
-# Will need to change eventually to check db type as well. This will be a function
-if platform == "win32":
-    database_connection = database.LOCAL
-    print("Running Local")
-else:
-    database_connection = database.REMOTE
-    print("Running Remote")
+def _flag(idx, default):
+    if len(sys.argv) > idx:
+        return sys.argv[idx].lower() == "true"
+    return default
 
-# Create folders: local is windows, remote is linux
-createDirectories(database_connection)
 
-# Create Database for Atlas: db will create based on sytem
-CreateDatabase(database_connection)
+def main():
+    f95_enable = _flag(1, True)
+    f95_full = _flag(2, False)          # re-fetch detail for every thread
+    dlsite_enable = _flag(3, False)
+    create_package = _flag(4, True)
 
-# Download from sources
-# F95 : 1st Source
-#f95.downloadLatest(f95, download.FULL, database_connection)
-if f95_enable:
-    print("Downloading from F95")
-    f95.downloadThreadSummary(f95, download.NEW, f95_full_download, database_connection)
+    start_time = time.time()
 
-# Dlsite : 2nd Source
-if dlsite_enable:
-    print("Downloading from DLSITE")
-    dlsite.updateCircleID(database_connection, "pro")
-    dlsite.updateCircleID(database_connection, "maniax")
-    dlsite.updateCircleID(database_connection, "pro")
+    db_type = config.resolve_db_type()
+    if db_type == database.LOCAL:
+        print(f"Running LOCAL  -> SQLite (data.db)   [DB_MODE={config.db_mode()}]")
+    else:
+        print(f"Running REMOTE -> MySQL @ {config.host(database.REMOTE.value)}   [DB_MODE={config.db_mode()}]")
+    print("  env:", config.env_status())
 
-# Steam : 3rd Source
-    
-# dlsite.getIDs(type, database_connection)
-#dlsite.getJSONgame(database_connection, "maniax", "RE") # 1704
-#dlsite.getJSONgame(database_connection, "maniax", "RJ", 5728, 20000) #5727
-# print(asyncio.run(dlsite.getTitleID("RJ303564")))
-    
-# Package data based on date. As of right now it will output a full db dump.
-if create_package:
-    print("Creating Package")
-    packager.createPackage(database_connection, start_time)
+    createDirectories(db_type)
+    CreateDatabase(db_type)
 
-print("All Updates Compelte")
-sys.exit()
+    if f95_enable:
+        print("Downloading from F95")
+        f95(F95Session()).run(db_type, full_detail=f95_full)
 
+    if dlsite_enable:
+        print("Downloading from DLSITE")
+        dlsite.updateCircleID(db_type, "pro")
+        dlsite.updateCircleID(db_type, "maniax")
+
+    # Once scraping is done, build the downloadable package file.
+    if create_package:
+        print("Creating package")
+        packager.createPackage(db_type, start_time)
+
+    print("All updates complete")
+
+
+if __name__ == "__main__":
+    main()

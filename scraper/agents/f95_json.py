@@ -37,7 +37,7 @@ class f95:
                   'accept-language' : 'en-US,en;q=0.9',
                   'cache-control':'max-age=0',
                   'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
-        request = requests.get(baseJsonURL() + "&page=5&sort=date&rows=90", headers)
+        request = requests.get(baseJsonURL() + "&page=5&sort=date&rows=90", headers=headers)
         if request.status_code == 200:
             data = request.json()
             total_pages = data["msg"]["pagination"]["total"]
@@ -66,7 +66,7 @@ class f95:
                   'accept-language' : 'en-US,en;q=0.9',
                   'cache-control':'max-age=0',
                   'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
-                request = requests.get(baseJsonURL() + "&page=" + str(index) + "&sort=date&rows=90", headers)
+                request = requests.get(baseJsonURL() + "&page=" + str(index) + "&sort=date&rows=90", headers=headers)
                 if request.status_code == 200:
                     data = request.json()
                     games = data["msg"]["data"]
@@ -85,7 +85,7 @@ class f95:
                         atlasRecord["title"] = df["title"][idx]
                         atlasRecord["creator"] = df["creator"][idx]
                         atlasRecord["version"] = df["version"][idx]
-                        atlasRecord["short_name"] = re.sub("[\W_]+","",str(atlasRecord["title"]).strip().replace(" ", "")).upper()
+                        atlasRecord["short_name"] = re.sub(r"[\W_]+","",str(atlasRecord["title"]).strip().replace(" ", "")).upper()
 
                         atlasRecord["id_name"] = (atlasRecord["short_name"] + "_" + str(atlasRecord["creator"]).strip().replace(" ", "").upper())
                         #atlasRecord["category"] = df["title"][idx]

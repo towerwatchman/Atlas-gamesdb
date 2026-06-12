@@ -1,0 +1,9 @@
+requests
+beautifulsoup4
+lxml
+mysql-connector-python
+pandas
+python-dotenv
+lz4
+deepdiff
+truststore

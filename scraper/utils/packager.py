@@ -1,7 +1,8 @@
 from scraper.utils.db import *
 from deepdiff import DeepDiff
 from scraper.utils.directory_manager import *
-from scraper.utils.db import *
+from scraper.config import config
+import os
 import datetime
 import json
 import time
@@ -18,11 +19,7 @@ class packager:
         pass
 
     def createPackage(type, start_time):
-        folder = "C:/packages"
-        if type == database.LOCAL:
-            folder = "C:/packages"
-        if type == database.REMOTE:
-            folder = "/usr/atlas/Atlas-gamesdb/public_html/packages"
+        folder = config.package_dir(type.value)
         # Check if any files exist, if not the make first package
         if os.listdir(folder) == []:
             print("Base file does not exist. Running for first time")

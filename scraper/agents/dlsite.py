@@ -180,7 +180,7 @@ class dlsite:
                     dlsiteRecord["banner_url"] = page[dtype + dlsite_id]["work_image"]
                     atlasRecord["version"] = "N/A"
                     atlasRecord["short_name"] = re.sub(
-                        "[\W_]+",
+                        r"[\W_]+",
                         "",
                         atlasRecord["title"].strip().replace(" ", ""),
                     ).upper()
