@@ -50,6 +50,7 @@ class gameRecord:
             "likes": "",
             "tags":"",
             "downloads":"",
+            "patches":"",
             "extras":"",
             "translations":"",
         }

@@ -25,16 +25,6 @@ DOWNLOAD_HOSTS = (
     "racaty", "bayfiles", "uploadhaven", "dropbox.com",
 )
 
-# Top-level section headers. F95 game threads only really use these three as
-# top-level dividers; words like "patch", "mod", "walkthrough", "save" are
-# content TYPES that appear as sub-group labels (e.g. a "Patch" group inside
-# DOWNLOAD), NOT section headers — treating them as sections mis-routes every
-# link that follows. Type classification still uses those words (TYPE_RULES).
-SECTION_HEADERS = {
-    "download", "downloads", "extras", "extra",
-    "translations", "translation",
-}
-
 # Inline "<b>Label</b>: value" fields we read directly.
 INLINE_LABELS = {
     "thread updated": "thread_updated",
@@ -196,8 +186,8 @@ def parse_thread_detail(html):
         "thread_id": None, "logged_in": None, "title": None, "prefixes": [],
         "cover_url": "", "screens": [], "rating": None, "votes": None,
         "overview": "", "tags": [],
-        "external_ids": {}, "downloads": [], "extras": [], "translations": [],
-        "spoilers": {},
+        "external_ids": {}, "downloads": [], "patches": [], "extras": [],
+        "translations": [], "spoilers": {},
         "locked_link_count": 0, "locked_spoiler_count": 0,
     }
     for field in INLINE_LABELS.values():
@@ -289,54 +279,88 @@ def parse_thread_detail(html):
         if cls:
             out["external_ids"].setdefault(cls[0], cls[1])
 
-    # Downloads / extras / translations.
+    # Downloads / patches / extras / translations.
     #
-    # The post is organised as section headers ("DOWNLOAD", "Extras",
-    # "Translations", ...) each followed by <b> sub-groups ("Win/Linux",
-    # "Part 1", ...) and links. Game mirrors go to `downloads`, the Extras
-    # section (mods/walkthroughs/...) to `extras`, and the Translations
-    # section to `translations`. Each item appears in exactly one list.
-    downloads, extras, translations = [], [], []
+    # F95 download areas are inconsistent: sometimes there's a "DOWNLOAD"
+    # header, sometimes the first OS label stands alone, sometimes patches are
+    # interleaved with the game files. So instead of relying on a header:
+    #   * Everything defaults to `downloads` — a link is a download when its
+    #     host is a file host (works with or without a DOWNLOAD header).
+    #   * `Patches` are detected by the label (a "Patch" divider, or a group
+    #     containing "patch"), since they're interleaved with game files.
+    #   * `Extras` / `Translations` are explicit dividers; once seen, the
+    #     following links go to that column. Extras link text is the type.
+    # Changelog/overview/"Other Games" links are ignored because they aren't
+    # file hosts and aren't under an Extras/Translations divider.
+    downloads, patches, extras, translations = [], [], [], []
     seen = set()
-    section = ""
+    divider = None          # None -> downloads area | 'extras' | 'translations'
     group = ""
+    patch_active = False
+    started = False         # have we reached the first real download link yet?
+
     for node in body.descendants:
         if isinstance(node, Tag) and node.name == "b":
-            label = node.get_text(" ", strip=True).rstrip(":")
-            low = label.lower()
-            if low in SECTION_HEADERS:
-                section, group = label, ""
-            elif label:
-                group = label
+            norm = node.get_text(" ", strip=True).rstrip(":").strip().lower()
+            if norm in ("extras", "extra"):
+                divider, patch_active, group = "extras", False, ""
+            elif norm in ("translations", "translation"):
+                divider, patch_active, group = "translations", False, ""
+            elif norm in ("download", "downloads"):
+                divider, patch_active, group = None, False, ""
+            else:
+                grp = node.get_text(" ", strip=True).rstrip(":").strip()
+                # strip a merged "DOWNLOAD " prefix ("DOWNLOAD Win/Linux")
+                grp = re.sub(r"(?i)^download\s+", "", grp)
+                group = grp
+                # patch tracking only matters once we're in the download area
+                if started:
+                    low = grp.lower()
+                    if "patch" in low:
+                        patch_active = True
+                    elif "season" in low:
+                        patch_active = False
         elif isinstance(node, Tag) and node.name == "a" and node.get("href"):
-            # Skip screenshot / lightbox image links — those are captured as
-            # `screens`, not downloads.
             classes = node.get("class") or []
             if "js-lbImage" in classes or node.find("img"):
-                continue
+                continue  # screenshot/lightbox image -> belongs in `screens`
+            if "/members/" in node["href"]:
+                continue  # @user mention / credit, not a download or extra
             url = _unwrap(node["href"])
-            text = node.get_text(" ", strip=True)
             host = _download_host(url) or _host_of(url)
-            sec_low = section.lower()
-            is_game = sec_low in ("download", "downloads")
-            in_file = bool(_download_host(url)) or "attachments.f95zone.to" in url
-            in_extras = bool(section) and not is_game
-            if not (in_file or in_extras):
-                continue
+            is_file = bool(_download_host(url)) or "attachments.f95zone.to" in url
+            label = node.get_text(" ", strip=True) or _filename_from_url(url)
+            if is_file:
+                started = True
+
+            if divider in ("extras", "translations"):
+                bucket_name = divider          # capture any link under divider
+            elif started and (patch_active or "patch" in group.lower()):
+                bucket_name = "patches"        # patch mirrors OR patch threads
+            elif is_file:
+                bucket_name = "downloads"
+            else:
+                continue  # not a file host, not a patch, no divider -> skip
+
             if url in seen:
                 continue
             seen.add(url)
-            label = text or _filename_from_url(url)
-            # Type from the visible label first (authoritative — "Multi Mod"
-            # stays a mod even though its thread slug says "walkthrough");
-            # fall back to the href filename when the label is generic.
-            kind = _classify_type(section, group, label, "")
-            if kind == "other":
-                alt = _classify_type(section, group, "", _filename_from_url(url))
-                if alt != "other":
-                    kind = alt
+
+            if bucket_name == "patches":
+                kind = "patch"
+            elif bucket_name == "translations":
+                kind = "translation"
+            elif bucket_name == "extras":
+                # extras: type from the anchor text (href filename fallback)
+                kind = _classify_type("extras", group, label, "")
+                if kind == "other":
+                    alt = _classify_type("extras", "", "", _filename_from_url(url))
+                    if alt != "other":
+                        kind = alt
+            else:
+                kind = _classify_type("download", group, label, "")
+
             entry = {
-                "section": section,
                 "group": group,
                 "label": label,
                 "type": kind,
@@ -344,13 +368,11 @@ def parse_thread_detail(html):
                 "url": url,
                 "masked": _is_masked(node["href"]),
             }
-            if sec_low.startswith("translation"):
-                translations.append(entry)
-            elif is_game:
-                downloads.append(entry)
-            else:
-                extras.append(entry)
+            {"downloads": downloads, "patches": patches,
+             "extras": extras, "translations": translations}[bucket_name].append(entry)
+
     out["downloads"] = downloads
+    out["patches"] = patches
     out["extras"] = extras
     out["translations"] = translations
 

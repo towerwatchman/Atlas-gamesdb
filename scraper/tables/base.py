@@ -16,7 +16,7 @@ class query:
             + us
             + """INCREMENT,
                     title TINYTEXT NOT NULL, 
-                    id_name LONGTEXT NOT NULL UNIQUE,
+                    id_name VARCHAR(255) NOT NULL UNIQUE,
                     short_name TINYTEXT NOT NULL,
                     original_name TINYTEXT,
                     category TINYTEXT,
@@ -64,6 +64,7 @@ class query:
                     rating DOUBLE,
                     screens LONGTEXT,
                     downloads LONGTEXT,
+                    patches LONGTEXT,
                     extras LONGTEXT,
                     translations LONGTEXT,
                     replies INT,

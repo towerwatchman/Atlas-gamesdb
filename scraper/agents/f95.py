@@ -134,6 +134,8 @@ class f95:
             f95rec["tags"] = ",".join(d["tags"])
         if d.get("downloads"):
             f95rec["downloads"] = json.dumps(d["downloads"], ensure_ascii=False)
+        if d.get("patches"):
+            f95rec["patches"] = json.dumps(d["patches"], ensure_ascii=False)
         if d.get("extras"):
             f95rec["extras"] = json.dumps(d["extras"], ensure_ascii=False)
         if d.get("translations"):

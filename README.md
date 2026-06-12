@@ -67,20 +67,23 @@ Known keys: `steam_appid`, `steam_community`, `itch_url`, `vndb_id`,
 `patreon`, `subscribestar`, `discord`, `gamejolt`, `twitter`. Whatever the
 thread links is captured; absent platforms are simply omitted.
 
-It also captures **downloads, extras and translations** into three separate
-JSON columns on `f95_zone` (each item appears in exactly one of them):
+It also captures **downloads, patches, extras and translations** into four
+separate JSON columns on `f95_zone` (each item in exactly one of them):
 
-- `downloads` — the game mirrors (the `DOWNLOAD` section), grouped by OS /
-  split-part / soundtrack.
-- `extras` — the `Extras` section: walkthroughs, multi-mods, gallery
-  unlocker, framerate mods, banner/wallpaper packs, etc.
+- `downloads` — game files. Everything in the download area defaults here; a
+  link counts when its host is a file host, so it's captured whether or not
+  the thread has a "DOWNLOAD" header.
+- `patches` — update/incest/etc. patches. Detected by a "Patch" label or a
+  group containing "patch" (they're often interleaved with game files), and
+  captured even when they're F95 *thread* links rather than file hosts.
+- `extras` — the `Extras` section: walkthroughs, mods, gallery unlocker,
+  guides, banner/wallpaper packs. The `type` comes from the link text.
 - `translations` — the `Translations` section.
 
-Every entry is `{section, group, label, type, host, url, masked}`. `type` is
-a normalised category derived from the link label (href filename as
-fallback): `game`, `walkthrough`, `mod`, `translation`, `patch`, `save`,
-`gallery_unlock`, `cheat`, `soundtrack`, `wallpaper_art`, `guide`, or
-`other`. Screenshot/lightbox images are excluded from all three — they live
+Each entry is `{group, label, type, host, url, masked}`. `type` is a
+normalised category (`game`, `patch`, `walkthrough`, `mod`, `translation`,
+`save`, `gallery_unlock`, `cheat`, `soundtrack`, `wallpaper_art`, `guide`,
+`other`). Screenshot/lightbox images are excluded from all four — they live
 in `screens`.
 
 ### Masked links
