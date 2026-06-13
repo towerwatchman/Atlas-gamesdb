@@ -38,6 +38,11 @@ MySQL on the server (Linux). When the scrape finishes it builds the
 downloadable package (`base`/`daily` `.update` files plus dated backups)
 in the configured package directory.
 
+**Packaging is MySQL-only.** `backup.py` and the packaging step always run
+against the production MySQL (REMOTE) database — the package files and the
+`updates` table they maintain only make sense for the live DB. On a local /
+SQLite (`DB_MODE=local`) run, `api.py` scrapes as usual but skips packaging.
+
 ## How login / cookie reuse works
 
 F95 hides the data we need (download links, external store/ID links, and the
@@ -134,3 +139,12 @@ F95_DELAY_MAX=4.0
 ```
 
 Failed-listing retries use a fixed 10s backoff.
+
+### Incremental runs
+
+Skipped (unchanged) games incur **no delay** — the jitter only applies to
+listing-page loads and to detail fetches that actually happen. On an
+incremental run the crawl also **stops early** once it reaches a listing page
+with nothing new/updated (the listing is newest-activity-first), so it doesn't
+walk — or wait between — pages of already-current games. Use the full flag
+(`python api.py true true`) to force a complete re-crawl.

@@ -2,6 +2,7 @@ from scraper.utils.db import *
 from deepdiff import DeepDiff
 from scraper.utils.directory_manager import *
 from scraper.config import config
+from scraper.types.eTypes import database
 import os
 import datetime
 import json
@@ -19,9 +20,15 @@ class packager:
         pass
 
     def createPackage(type, start_time):
+        # Packaging always runs against the production MySQL (REMOTE) database,
+        # regardless of what the caller passes — the package files and the
+        # `updates` table it maintains only make sense for the live DB.
+        type = database.REMOTE
         folder = config.package_dir(type.value)
-        # Check if any files exist, if not the make first package
-        if os.listdir(folder) == []:
+        os.makedirs(os.path.join(folder, "backup"), exist_ok=True)
+        # First run = no package (.update) files yet -> make the base package.
+        existing = [f for f in os.listdir(folder) if f.endswith(".update")]
+        if not existing:
             print("Base file does not exist. Running for first time")
             packager.createFile(
                 type,

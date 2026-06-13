@@ -83,11 +83,21 @@ class f95:
                 continue
 
             html = BeautifulSoup(r.content, "lxml")
+            processed = 0
             for element in html.find_all("div", class_="structItem"):
                 try:
-                    self._process_listing_item(element, db_type, full_detail)
+                    if self._process_listing_item(element, db_type, full_detail):
+                        processed += 1
                 except Exception as ex:   # keep going on a single bad row
                     print("item error:", ex)
+
+            # Incremental runs: the listing is newest-activity-first, so once a
+            # whole page has nothing new/updated, everything below is older too
+            # -> stop crawling (no more page loads, no more waiting). Skipped
+            # games never incur a delay; only fetched detail pages do.
+            if not full_detail and processed == 0:
+                print("page fully up-to-date; stopping early")
+                break
             _jitter()
 
     def _process_listing_item(self, element, db_type, full_detail):
@@ -97,7 +107,7 @@ class f95:
         title_links = element.select("div.structItem-title")[0].find_all("a")
         parser.ParseThreadItem(title_links, atlas, f95rec)
         if atlas.get("category") == "README":
-            return
+            return False
 
         f95rec["thread_publish_date"] = epoch.ConvertToUnixTime(
             element.select("li.structItem-startDate")[0].find_all("a")[0]
@@ -116,12 +126,13 @@ class f95:
         is_new = last_update == 0
         is_updated = int(f95rec["last_thread_comment"] or 0) > last_update
         if not (is_new or is_updated or full_detail):
-            return
+            return False          # unchanged -> skip, no detail fetch, no delay
 
         print("detail:", f95rec["f95_id"], atlas.get("title"))
         self._fetch_detail(f95rec["site_url"], atlas, f95rec)
 
         self._update_record(atlas, f95rec, db_type)
+        return True
 
     # ---- detail (authenticated) ---------------------------------------------
     def _fetch_detail(self, site_url, atlas, f95rec):

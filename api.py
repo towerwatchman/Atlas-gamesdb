@@ -59,9 +59,13 @@ def main():
         dlsite.updateCircleID(db_type, "maniax")
 
     # Once scraping is done, build the downloadable package file.
+    # Packaging is MySQL-only, so skip it on local/SQLite dev runs.
     if create_package:
-        print("Creating package")
-        packager.createPackage(db_type, start_time)
+        if db_type == database.REMOTE:
+            print("Creating package")
+            packager.createPackage(db_type, start_time)
+        else:
+            print("Packaging skipped (runs against MySQL only)")
 
     print("All updates complete")
 
