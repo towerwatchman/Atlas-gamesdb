@@ -43,6 +43,12 @@ against the production MySQL (REMOTE) database — the package files and the
 `updates` table they maintain only make sense for the live DB. On a local /
 SQLite (`DB_MODE=local`) run, `api.py` scrapes as usual but skips packaging.
 
+The Atlas client polls `https://<host>/api/updates`, compares the list to its
+local update history, and downloads any newer `.update` files from
+`/packages/`. That endpoint is a small PHP script on the web server that
+selects the `updates` table live (see `server/` and the web-server note
+below) — no database reader on the client.
+
 ## How login / cookie reuse works
 
 F95 hides the data we need (download links, external store/ID links, and the
@@ -148,3 +154,17 @@ incremental run the crawl also **stops early** once it reaches a listing page
 with nothing new/updated (the listing is newest-activity-first), so it doesn't
 walk — or wait between — pages of already-current games. Use the full flag
 (`python api.py true true`) to force a complete re-crawl.
+
+## Web server: /api/updates endpoint
+
+The client requests `/api/updates` (no extension). It's served by a PHP script
+(`server/updates.php`) that returns the `updates` table as a JSON array of
+`{date, name, md5}`. Database credentials for it live in `server/config.php`
+using a read-only MySQL user, kept outside the web root. Apache maps the path:
+
+```apache
+Alias /api/updates /var/www/html/api/updates.php
+<Directory /var/www/html/api>
+    Require all granted
+</Directory>
+```
