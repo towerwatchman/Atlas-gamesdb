@@ -21,7 +21,8 @@ from scraper.datatypes.record import gameRecord
 from scraper.utils.epoch import epoch
 from scraper.utils.parser import parser
 from scraper.utils.db import (
-    UpdatetableDynamic, findIdByTitle, getLastUpdate,
+    UpdatetableDynamic, getLastUpdate,
+    getAtlasIdByF95Id, insertAtlas, updateAtlasById,
 )
 
 
@@ -185,8 +186,17 @@ class f95:
         return {k: v for k, v in d.items() if v}
 
     def _update_record(self, atlas, f95rec, db_type):
-        UpdatetableDynamic("atlas", self._clean(atlas), db_type)
-        atlas_id = findIdByTitle("atlas", atlas["id_name"], db_type)
+        # Find-or-create the atlas row by the thread's stable f95_id, NOT by
+        # the title-derived id_name. id_name can change (renames) or collide
+        # (two threads, same title+creator); f95_id never does.
+        f95_id = f95rec["f95_id"]
+        atlas_id = getAtlasIdByF95Id(f95_id, db_type)
+        if atlas_id:
+            # Known thread -> update its existing atlas row in place.
+            updateAtlasById(atlas_id, self._clean(atlas), db_type)
+        else:
+            # New thread -> insert a fresh atlas row and take its new id.
+            atlas_id = insertAtlas(self._clean(atlas), db_type)
         f95rec["atlas_id"] = atlas_id
         UpdatetableDynamic("f95_zone", self._clean(f95rec), db_type)
-        print("  stored f95_id", f95rec["f95_id"], "-> atlas_id", atlas_id)
+        print("  stored f95_id", f95_id, "-> atlas_id", atlas_id)

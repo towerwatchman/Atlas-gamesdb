@@ -16,7 +16,7 @@ class query:
             + us
             + """INCREMENT,
                     title TINYTEXT NOT NULL, 
-                    id_name VARCHAR(255) NOT NULL UNIQUE,
+                    id_name VARCHAR(255) NOT NULL,
                     short_name TINYTEXT NOT NULL,
                     original_name TINYTEXT,
                     category TINYTEXT,

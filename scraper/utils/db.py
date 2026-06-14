@@ -82,6 +82,57 @@ def UpdatetableDynamic(table, values, db_type):
         con.close()
 
 
+def insertAtlas(values, db_type):
+    """Insert a brand-new atlas row and return its generated atlas_id.
+
+    Used for threads we have never seen before. Plain INSERT (no REPLACE) so
+    the AUTOINCREMENT atlas_id is assigned once and never churns.
+    """
+    if not values:
+        raise ValueError("insertAtlas called with empty values")
+    con, ph = _connect(db_type)
+    try:
+        cols = list(values.keys())
+        col_sql = ", ".join(cols)
+        placeholders = ", ".join([ph] * len(cols))
+        params = [int(v) if isinstance(v, bool) else v for v in values.values()]
+        cur = con.cursor()
+        cur.execute(
+            f"INSERT INTO atlas ({col_sql}) VALUES ({placeholders})", params
+        )
+        con.commit()
+        new_id = cur.lastrowid
+        cur.close()
+        return new_id
+    finally:
+        con.close()
+
+
+def updateAtlasById(atlas_id, values, db_type):
+    """Update an existing atlas row in place, located by its atlas_id.
+
+    Used for threads we already have (resolved via f95_id). Updating by the
+    primary key keeps atlas_id stable across re-scrapes.
+    """
+    if not values:
+        return
+    con, ph = _connect(db_type)
+    try:
+        cols = [c for c in values.keys() if c != "atlas_id"]
+        if not cols:
+            return
+        set_sql = ", ".join(f"{c} = {ph}" for c in cols)
+        params = [int(values[c]) if isinstance(values[c], bool) else values[c]
+                  for c in cols]
+        params.append(atlas_id)
+        cur = con.cursor()
+        cur.execute(f"UPDATE atlas SET {set_sql} WHERE atlas_id = {ph}", params)
+        con.commit()
+        cur.close()
+    finally:
+        con.close()
+
+
 def TruncateLocalUpdatesTable(db_type):
     con, _ = _connect(db_type)
     try:
@@ -145,6 +196,23 @@ def getLastUpdate(db_type, f95_id):
         row = cur.fetchone()
         cur.close()
         return row[0] if row and row[0] is not None else 0
+    finally:
+        con.close()
+
+
+def getAtlasIdByF95Id(f95_id, db_type):
+    """Return the atlas_id already linked to this f95 thread, or 0 if unseen.
+
+    This is the canonical way to find an existing f95 game: the thread's
+    f95_id is stable, unlike the title-derived id_name.
+    """
+    con, ph = _connect(db_type)
+    try:
+        cur = con.cursor()
+        cur.execute(f"SELECT atlas_id FROM f95_zone WHERE f95_id = {ph}", (f95_id,))
+        row = cur.fetchone()
+        cur.close()
+        return row[0] if row else 0
     finally:
         con.close()
 
