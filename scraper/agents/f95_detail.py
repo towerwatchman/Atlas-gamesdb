@@ -110,6 +110,14 @@ def _netloc(url):
     return urlparse(url).netloc.replace("www.", "")
 
 
+def _is_generic_image(url):
+    """True for site chrome (favicon, /assets/ logos) that is never a cover."""
+    if not url:
+        return True
+    u = url.lower()
+    return "favicon" in u or "/assets/" in u or "f95zone_banner" in u
+
+
 def _filename_from_url(url):
     """Best-effort file/label from a URL path (strips F95's numeric prefix)."""
     tail = urlparse(url).path.rstrip("/").split("/")[-1]
@@ -208,10 +216,14 @@ def parse_thread_detail(html):
         # title is the trailing text node after the prefix labels
         out["title"] = h1.get_text(" ", strip=True)
 
-    # Cover: prefer the thread cover (og:image) over the generic banner image.
+    # og:image is unreliable as a cover on F95 thread pages (it is usually the
+    # generic site icon / favicon), so treat it only as a last-resort fallback.
+    # The real cover is the dev's header image in the first post, set below.
     og = soup.find("meta", attrs={"property": "og:image"})
-    if og and og.get("content"):
-        out["cover_url"] = og["content"]
+    og_cover = og["content"] if (og and og.get("content")) else ""
+    if _is_generic_image(og_cover):
+        og_cover = ""
+    out["cover_url"] = og_cover
 
     # Rating + votes.
     stars = soup.select_one("span.ratingStars")
@@ -385,5 +397,14 @@ def parse_thread_detail(html):
                 continue
             screens.append(href)
     out["screens"] = screens
+
+    # Cover banner: the dev's header image is the first inline bbImage in the
+    # first post. Mirrors the original scraper (find_all("img","bbImage")[0]),
+    # de-thumbnailing to full resolution. Overrides the og:image fallback.
+    for img in body.find_all("img", class_="bbImage"):
+        src = img.get("data-url") or img.get("data-src") or img.get("src") or ""
+        if src and not _is_generic_image(src):
+            out["cover_url"] = src.replace("/thumb/", "/")
+            break
 
     return out
