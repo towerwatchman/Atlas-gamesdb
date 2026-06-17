@@ -46,6 +46,7 @@ class gameRecord:
             "f95_id": "",
             "banner_url":"",
             "site_url":"",
+            "thread_updated": "",
             "views":"",
             "likes": "",
             "tags":"",

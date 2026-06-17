@@ -85,10 +85,21 @@ def _classify_external(url):
         ("steam_community", r"steamcommunity\.com/(?:app|games)/(\d+)"),
         ("itch_url", r"https?://([\w-]+\.itch\.io(?:/[\w-]+)?)"),
         ("vndb_id", r"vndb\.org/(v\d+)"),
-        ("patreon", r"patreon\.com/([\w-]+)"),
+        ("gog_url", r"gog\.com/(?:[\w-]+/)?game/([\w-]+)"),
+        # Old-style numeric profile (patreon.com/user?u=12345) has no usable
+        # slug in the path -> capture the numeric id instead of the literal
+        # word "user". Must be checked before the generic slug pattern below.
+        ("patreon", r"patreon\.com/user\?u=(\d+)"),
+        ("patreon", r"patreon\.com/(?!user(?:[/?]|$))([\w-]+)"),
         ("subscribestar", r"subscribestar\.adult/([\w-]+)"),
-        ("discord", r"discord\.(?:gg|com/invite)/([\w-]+)"),
+        ("buymeacoffee", r"buymeacoffee\.com/([\w-]+)"),
+        ("kofi", r"ko-?fi\.com/([\w-]+)"),
+        # discord.gg/<code>, discord.com/invite/<code>, and the older
+        # discordapp.com/invite/<code> domain are all still seen in the wild.
+        ("discord", r"discord(?:app)?\.(?:gg|com/invite)/([\w-]+)"),
         ("gamejolt", r"gamejolt\.com/games/[\w-]+/(\d+)"),
+        ("bluesky", r"bsky\.app/profile/([\w.-]+)"),
+        ("facebook", r"facebook\.com/([\w.-]+)"),
         ("twitter", r"(?:twitter|x)\.com/([\w]+)"),
     ]
     for kind, pat in patterns:
@@ -211,10 +222,19 @@ def parse_thread_detail(html):
 
     # Title + prefixes from the header.
     h1 = soup.select_one("h1.p-title-value")
+    title_dev_tag = None
     if h1:
         out["prefixes"] = [s.get_text(strip=True) for s in h1.select("span.label, span[class^=pre-]")]
         # title is the trailing text node after the prefix labels
         out["title"] = h1.get_text(" ", strip=True)
+        # F95 thread titles end in "... [version] [Developer]" or
+        # "... [version] [Dev/Studio]" -- the last bracket is the credited
+        # developer/studio username, used below to verify that a support-
+        # button widget actually belongs to this game's developer and not
+        # an unrelated poster elsewhere in the thread.
+        brackets = re.findall(r"\[([^\[\]]+)\]", out["title"])
+        if brackets:
+            title_dev_tag = brackets[-1].split("/")[0].strip()
 
     # og:image is unreliable as a cover on F95 thread pages (it is usually the
     # generic site icon / favicon), so treat it only as a last-resort fallback.
@@ -285,11 +305,28 @@ def parse_thread_detail(html):
                 parts.append(str(sib))
         out["overview"] = re.sub(r"\n{2,}", "\n", "".join(parts)).strip(": \n")
 
-    # External store/social IDs first (whole-post scan).
-    for a in body.find_all("a", href=True):
-        cls = _classify_external(_unwrap(a["href"]))
-        if cls:
-            out["external_ids"].setdefault(cls[0], cls[1])
+    # External store/social IDs. Most threads list these inline in the post
+    # body next to the Developer label, but F95 also renders some as icon
+    # buttons in an "f95-support-btns" widget on the poster's user card
+    # (Patreon/SubscribeStar/BuyMeACoffee, no surrounding text). That widget
+    # is tied to whoever made the post, NOT to "the game" -- if some other
+    # poster with their own "Game Developer" badge replies in this thread,
+    # F95 decorates THEIR post with THEIR support links, which have nothing
+    # to do with this game (seen on a real thread: a reply from an unrelated
+    # dev pulled in their own Patreon/Discord/personal site). So a widget is
+    # only trusted when its post's author matches the developer credited in
+    # the thread title's trailing [Bracket] tag.
+    external_scopes = [body]
+    for widget in soup.select("div.f95-support-btns"):
+        post = widget.find_parent("article", class_="message--post")
+        author = post.get("data-author", "") if post else ""
+        if title_dev_tag and author and author.strip().lower() == title_dev_tag.lower():
+            external_scopes.append(widget)
+    for scope in external_scopes:
+        for a in scope.find_all("a", href=True):
+            cls = _classify_external(_unwrap(a["href"]))
+            if cls:
+                out["external_ids"].setdefault(cls[0], cls[1])
 
     # Downloads / patches / extras / translations.
     #

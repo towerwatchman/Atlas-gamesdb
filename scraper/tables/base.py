@@ -57,6 +57,7 @@ class query:
                     site_url LONGTEXT,
                     last_thread_comment BIGINT,
                     thread_publish_date BIGINT,
+                    thread_updated BIGINT,
                     last_record_update BIGINT,
                     views INT,
                     likes INT,

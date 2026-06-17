@@ -117,11 +117,9 @@ class f95:
         f95rec["last_thread_comment"] = epoch.ConvertToUnixTime(
             parser.ParseDateTimeItem(element.select("time.structItem-latestDate"))
         )
-        f95rec["last_record_update"] = int(time.time())
         f95rec["replies"] = parser.ParseReplies(element)
         f95rec["views"] = parser.ParseViews(element)
         f95rec["rating"] = parser.ParseRating(element)
-        atlas["last_record_update"] = int(time.time())
 
         last_update = int(getLastUpdate(db_type, f95rec["f95_id"]))
         is_new = last_update == 0
@@ -165,6 +163,10 @@ class f95:
             f95rec["translations"] = json.dumps(d["translations"], ensure_ascii=False)
         if d.get("likes") is not None:
             f95rec["likes"] = d.get("likes")
+        if d.get("thread_updated"):
+            # F95's own "Thread Updated: YYYY-MM-DD" label on the thread page,
+            # not the time our scraper happened to run.
+            f95rec["thread_updated"] = epoch.ConvertToUnixTime(d["thread_updated"])
 
         # canonical / atlas
         atlas["overview"] = d.get("overview", "")
@@ -186,6 +188,14 @@ class f95:
         return {k: v for k, v in d.items() if v}
 
     def _update_record(self, atlas, f95rec, db_type):
+        # Bookkeeping timestamp: when OUR scraper wrote this row. Distinct from
+        # f95rec["thread_updated"], which is F95's own "Thread Updated" date
+        # scraped off the page. Stamped here, right before the write, rather
+        # than back at listing-parse time.
+        now = int(time.time())
+        f95rec["last_record_update"] = now
+        atlas["last_record_update"] = now
+
         # Find-or-create the atlas row by the thread's stable f95_id, NOT by
         # the title-derived id_name. id_name can change (renames) or collide
         # (two threads, same title+creator); f95_id never does.

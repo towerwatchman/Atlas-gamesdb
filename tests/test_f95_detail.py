@@ -103,6 +103,44 @@ def test_chapter_threads_and_member_links():
         assert not any("/members/" in x["url"] for x in allitems)
 
 
+def test_thread_updated_label_parsed():
+    # "Thread Updated" is F95's own freshness date for the post, distinct
+    # from last_thread_comment (latest reply) and our own bookkeeping
+    # last_record_update (when we wrote the row).
+    d = _load("eternum_loggedin")
+    assert d["thread_updated"] == "2026-01-21"
+
+
+def test_new_external_platforms_captured():
+    # GOG, Bluesky, and the discordapp.com invite domain are all real links
+    # in this dev-info line that were previously silently dropped.
+    d = _load("being_a_dik_loggedin")
+    assert d["external_ids"].get("gog_url") == "being_a_dik"
+    assert d["external_ids"].get("bluesky") == "drpinkcake.bsky.social"
+    assert d["external_ids"].get("discord") == "KyCc5E4"
+
+
+def test_facebook_captured():
+    d = _load("daughter_for_dessert")
+    assert d["external_ids"].get("facebook") == "LoveJointCom"
+
+
+def test_patreon_numeric_user_id_not_literal_user():
+    # patreon.com/user?u=12345 has no slug; the old regex captured the
+    # literal word "user" instead of anything identifying.
+    d = _load("lostfound")
+    assert d["external_ids"].get("patreon") == "19780656"
+
+
+def test_support_widget_requires_matching_developer():
+    # Hard Lessons has an f95-support-btns widget on the page, but it
+    # belongs to a different user's reply (an unrelated dev sharing their
+    # own Patreon/Discord), not the thread's credited developer (ADAM!).
+    # It must NOT be absorbed into this game's external_ids.
+    d = _load("hardlessons")
+    assert d["external_ids"] == {}
+
+
 if __name__ == "__main__":
     test_logged_out_is_gated()
     test_logged_in_unlocks_everything()
@@ -110,4 +148,9 @@ if __name__ == "__main__":
     test_dik_interleaved_patches_split_out()
     test_patch_thread_links_captured()
     test_chapter_threads_and_member_links()
+    test_thread_updated_label_parsed()
+    test_new_external_platforms_captured()
+    test_facebook_captured()
+    test_patreon_numeric_user_id_not_literal_user()
+    test_support_widget_requires_matching_developer()
     print("all parser tests passed")
