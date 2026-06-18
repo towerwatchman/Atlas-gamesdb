@@ -2,7 +2,7 @@
 Main entry point.
 
 Usage:
-    python api.py [f95] [full] [dlsite] [package]
+    python api.py [f95] [full] [dlsite] [package] [lewdcorner] [lc_full]
 each optional arg is 'true'/'false' (positional, matching the old CLI).
 
 Flow:
@@ -23,6 +23,8 @@ from scraper.utils.packager import packager
 from scraper.auth import F95Session
 from scraper.agents.f95 import f95
 from scraper.agents.dlsite import dlsite
+from scraper.auth import LCSession
+from scraper.agents.lewdcorner import lewdcorner
 
 
 def _flag(idx, default):
@@ -36,6 +38,8 @@ def main():
     f95_full = _flag(2, False)          # re-fetch detail for every thread
     dlsite_enable = _flag(3, False)
     create_package = _flag(4, True)
+    lc_enable = _flag(5, False)         # LewdCorner feed scrape
+    lc_full = _flag(6, False)           # walk every feed page (vs. stop-early)
 
     start_time = time.time()
 
@@ -57,6 +61,10 @@ def main():
         print("Downloading from DLSITE")
         dlsite.updateCircleID(db_type, "pro")
         dlsite.updateCircleID(db_type, "maniax")
+
+    if lc_enable:
+        print("Downloading from LewdCorner")
+        lewdcorner(LCSession()).run(db_type, full=lc_full)
 
     # Once scraping is done, build the downloadable package file.
     # Packaging is MySQL-only, so skip it on local/SQLite dev runs.

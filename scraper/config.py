@@ -91,6 +91,23 @@ class config:
         _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         return os.environ.get("F95_COOKIE_FILE", os.path.join(_root, "f95_cookies.json"))
 
+    # ----- LewdCorner login (dummy account) -----
+    # LewdCorner is XenForo, same as F95, so the auth model is identical:
+    # a dummy account whose session cookie is reused across runs. The
+    # latest-updates.php?api=1 feed is returned for an authenticated session.
+    @staticmethod
+    def lc_user():
+        return _require("LC_USER")
+
+    @staticmethod
+    def lc_password():
+        return _require("LC_PASSWORD")
+
+    @staticmethod
+    def lc_cookie_file():
+        _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        return os.environ.get("LC_COOKIE_FILE", os.path.join(_root, "lc_cookies.json"))
+
     # ----- Output -----
     @staticmethod
     def package_dir(db_type):

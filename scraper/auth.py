@@ -55,15 +55,29 @@ class AuthError(RuntimeError):
     pass
 
 
-class F95Session:
-    """Wraps a requests.Session with cookie persistence and lazy login."""
+class XenForoSession:
+    """Generic XenForo 2.x authenticated session: cookie persistence + lazy
+    login + liveness via the `data-logged-in` flag. Subclasses set the site
+    BASE and supply credentials/cookie-file accessors.
 
-    def __init__(self, cookie_file=None):
-        self.cookie_file = cookie_file or config.f95_cookie_file()
+    Both F95zone and LewdCorner run XenForo, so the login flow (POST to
+    /login/login with the page's _xfToken) and the liveness signal are
+    identical; only the base URL and which .env credentials to use differ.
+    """
+
+    BASE = ""  # subclass sets this, e.g. "https://f95zone.to"
+
+    def __init__(self, cookie_file):
+        self.cookie_file = cookie_file
         self.session = requests.Session()
         self.session.headers.update(DEFAULT_HEADERS)
         self._authenticated = False
         self._load_cookies()
+
+    # ---- credentials (subclass overrides) ----------------------------------
+    def _credentials(self):
+        """Return (user, password) for login. Overridden per site."""
+        raise NotImplementedError
 
     # ---- cookie persistence -------------------------------------------------
     def _load_cookies(self):
@@ -107,7 +121,7 @@ class F95Session:
     def is_logged_in(self):
         """Hit a lightweight page and read the login flag."""
         try:
-            r = self.session.get(BASE + "/account/", timeout=30,
+            r = self.session.get(self.BASE + "/account/", timeout=30,
                                   allow_redirects=True)
         except requests.RequestException:
             return False
@@ -115,11 +129,10 @@ class F95Session:
 
     def login(self):
         """Full XenForo login using credentials from .env."""
-        user = config.f95_user()
-        password = config.f95_password()
+        user, password = self._credentials()
 
         # 1. GET the login form to obtain the CSRF token.
-        r = self.session.get(BASE + "/login/login", timeout=30)
+        r = self.session.get(self.BASE + "/login/login", timeout=30)
         if r.status_code != 200:
             raise AuthError(f"Could not load login page (HTTP {r.status_code})")
         soup = BeautifulSoup(r.text, "lxml")
@@ -131,18 +144,18 @@ class F95Session:
             "login": user,
             "password": password,
             "remember": "1",
-            "_xfRedirect": BASE + "/",
+            "_xfRedirect": self.BASE + "/",
             "_xfToken": token,
         }
-        headers = {"Referer": BASE + "/login/login",
-                   "Origin": BASE}
-        r = self.session.post(BASE + "/login/login", data=payload,
+        headers = {"Referer": self.BASE + "/login/login",
+                   "Origin": self.BASE}
+        r = self.session.post(self.BASE + "/login/login", data=payload,
                               headers=headers, timeout=30, allow_redirects=True)
 
         if not self._is_logged_in_html(r.text) and not self.is_logged_in():
             raise AuthError(
-                "Login failed. Check F95_USER / F95_PASSWORD in .env, "
-                "and whether the account triggered a captcha."
+                f"Login failed for {self.BASE}. Check the account credentials "
+                "in .env, and whether the account triggered a captcha."
             )
         self._authenticated = True
         self._save_cookies()
@@ -172,6 +185,41 @@ class F95Session:
             r = self.session.get(url, **kwargs)
         return r
 
+    def get_json(self, url, **kwargs):
+        """Authenticated GET that returns parsed JSON (or None).
+
+        Used for the LewdCorner latest-updates.php?api=1 feed: it returns JSON
+        rather than HTML, so the data-logged-in HTML check in get() doesn't
+        apply. We ensure auth up front; if the feed comes back as a login/HTML
+        page (cookie died), we re-auth once and retry.
+        """
+        self.ensure_authenticated()
+        kwargs.setdefault("timeout", 30)
+        r = self.session.get(url, **kwargs)
+        ct = r.headers.get("Content-Type", "")
+        if r.status_code == 200 and "json" not in ct.lower():
+            # Probably got served an HTML page because the session lapsed.
+            if not self._is_logged_in_html(r.text):
+                self._authenticated = False
+                self.login()
+                r = self.session.get(url, **kwargs)
+        try:
+            return r.json()
+        except ValueError:
+            return None
+
+
+class F95Session(XenForoSession):
+    """F95zone session (behaviour unchanged from the original)."""
+
+    BASE = "https://f95zone.to"
+
+    def __init__(self, cookie_file=None):
+        super().__init__(cookie_file or config.f95_cookie_file())
+
+    def _credentials(self):
+        return config.f95_user(), config.f95_password()
+
     def resolve_masked(self, url):
         """Resolve an F95 /masked/ link to its real destination URL.
 
@@ -199,3 +247,17 @@ class F95Session:
             return r.url
         m = re.search(r'href="(https?://[^"]+)"[^>]*link--external', r.text)
         return m.group(1) if m else None
+
+
+class LCSession(XenForoSession):
+    """LewdCorner session. Same XenForo login as F95; only the base URL and
+    credentials differ. The latest-updates.php?api=1 feed is fetched with
+    get_json() through this authenticated session."""
+
+    BASE = "https://lewdcorner.com"
+
+    def __init__(self, cookie_file=None):
+        super().__init__(cookie_file or config.lc_cookie_file())
+
+    def _credentials(self):
+        return config.lc_user(), config.lc_password()

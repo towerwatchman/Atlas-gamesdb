@@ -217,6 +217,46 @@ def getAtlasIdByF95Id(f95_id, db_type):
         con.close()
 
 
+def atlasOwnedByOtherSource(atlas_id, db_type):
+    """True if this atlas row is referenced by a NON-lewdcorner source table
+    (f95_zone, dlsite, sxs). Used so the LewdCorner agent never overwrites the
+    atlas fields of a game that another source created/owns -- it only links a
+    lewdcorner row to it."""
+    con, ph = _connect(db_type)
+    try:
+        cur = con.cursor()
+        for tbl in ("f95_zone", "dlsite", "sxs"):
+            try:
+                cur.execute(f"SELECT 1 FROM {tbl} WHERE atlas_id = {ph} LIMIT 1",
+                            (atlas_id,))
+                if cur.fetchone():
+                    cur.close()
+                    return True
+            except Exception:
+                # Table may not exist on a partial dev DB; ignore and continue.
+                pass
+        cur.close()
+        return False
+    finally:
+        con.close()
+
+
+def getAtlasIdByLcId(lc_id, db_type):
+    """Return the atlas_id already linked to this LewdCorner thread, or 0 if
+    unseen. The LewdCorner thread id (lc_id) is stable, so this is the
+    canonical way to find a row we've scraped before and update it in place
+    rather than inserting a duplicate."""
+    con, ph = _connect(db_type)
+    try:
+        cur = con.cursor()
+        cur.execute(f"SELECT atlas_id FROM lewdcorner WHERE lc_id = {ph}", (lc_id,))
+        row = cur.fetchone()
+        cur.close()
+        return row[0] if row else 0
+    finally:
+        con.close()
+
+
 def findIdByTitle(table, id_name, db_type):
     _check_table(table)
     con, ph = _connect(db_type)

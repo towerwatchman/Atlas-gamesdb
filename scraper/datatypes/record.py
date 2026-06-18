@@ -56,3 +56,23 @@ class gameRecord:
             "translations":"",
         }
         return Titem
+
+    def lcRecord():
+        Titem = {
+            "atlas_id": "",
+            "lc_id": "",
+            "banner_url": "",
+            "site_url": "",
+            "register_date": "",
+            "thread_updated": "",
+            "last_record_update": "",
+            "tier": "",
+            "prefixes": "",
+            "views": "",
+            "likes": "",
+            "tags": "",
+            "rating": "",
+            "screens": "",
+            "downloads": "",
+        }
+        return Titem

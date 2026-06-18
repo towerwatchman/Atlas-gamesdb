@@ -134,11 +134,16 @@ class query:
                 banner_url LONGTEXT, 
                 site_url LONGTEXT,
                 register_date BIGINT,
+                thread_updated BIGINT,
+                last_record_update BIGINT,
+                tier TINYTEXT,
+                prefixes TINYTEXT,
                 views INT,
                 likes INT,
                 tags LONGTEXT,
                 rating DOUBLE,
                 screens LONGTEXT,
+                downloads LONGTEXT,
                 FOREIGN KEY (atlas_id) REFERENCES atlas(atlas_id)              
             );
         """

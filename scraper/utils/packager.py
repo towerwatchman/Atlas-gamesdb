@@ -84,13 +84,15 @@ class packager:
     def createBaseUpdate(type, start_time):
         atlas_object = {"atlas": downloadBase(type, "atlas", start_time)}
         f95_object = {"f95_zone": downloadBase(type, "f95_zone", start_time)}
+        lc_object = {"lewdcorner": downloadBase(type, "lewdcorner", start_time)}
         min_ver = {"min_ver": "0.0.0"}
-        data = {**atlas_object, **f95_object, **min_ver}
+        data = {**atlas_object, **f95_object, **lc_object, **min_ver}
         return data
 
     def createBackup(type, folder, start_time):
         atlas_object = downloadBase(type, "atlas", start_time)
         f95_object = downloadBase(type, "f95_zone", start_time)
+        lc_object = downloadBase(type, "lewdcorner", start_time)
         packager.createFile(
             type,
             os.path.join(folder, "backup"),
@@ -105,6 +107,14 @@ class packager:
             "f95_backup_" + datetime.datetime.today().strftime("%Y%m%d"),
             "backup",
             f95_object,
+            False,
+        )
+        packager.createFile(
+            type,
+            os.path.join(folder, "backup"),
+            "lewdcorner_backup_" + datetime.datetime.today().strftime("%Y%m%d"),
+            "backup",
+            lc_object,
             False,
         )
 
