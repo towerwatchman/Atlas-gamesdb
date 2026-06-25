@@ -20,11 +20,9 @@ class packager:
         pass
 
     def createPackage(type, start_time):
-        # Packaging always runs against the production MySQL (REMOTE) database,
-        # regardless of what the caller passes — the package files and the
-        # `updates` table it maintains only make sense for the live DB.
+        # Packaging always runs against the (only) MySQL database.
         type = database.REMOTE
-        folder = config.package_dir(type.value)
+        folder = config.package_dir()
         os.makedirs(os.path.join(folder, "backup"), exist_ok=True)
         # First run = no package (.update) files yet -> make the base package.
         existing = [f for f in os.listdir(folder) if f.endswith(".update")]

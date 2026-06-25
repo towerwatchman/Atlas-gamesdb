@@ -1,34 +1,65 @@
 """
 F95 scraper.
 
-Listing  : public forum listing at /forums/games.2/ (unchanged approach;
-           login is not required to enumerate threads).
-Detail   : each new/updated thread page is fetched through an AUTHENTICATED
+Listing  : the public "latest updates" JSON feed used by F95's own
+           /sam/latest_alpha/ page:
+
+               https://f95zone.to/sam/latest_alpha/latest_data.php
+                   ?cmd=list&cat=games&page=N&sort=date&rows=R
+
+           This is a single fast request per page (no HTML parse) and gives
+           us a `ts` field per thread -- the real timestamp of the latest
+           activity. That's more reliable than F95's own "Thread Updated"
+           label on the thread page itself (devs often forget to bump it),
+           so `ts` is what drives change-detection AND what we store as
+           `thread_updated`, overriding whatever the detail-page label says.
+
+Detail   : each new/updated thread is still fetched through an AUTHENTICATED
            session so the guest-gated content (external IDs, downloads,
-           spoiler sections) resolves. See scraper/agents/f95_detail.py.
+           spoiler sections, full tag list, category/engine/status
+           prefixes) resolves -- the listing feed only gives prefix/tag IDs,
+           not names, so it can't replace the detail fetch on its own.
+           See scraper/agents/f95_detail.py.
+
+Pacing   : the SAME jitter delay (F95_DELAY_MIN/MAX, default 2-4s) is used
+           before every actual outbound F95 request -- both listing/API
+           calls and detail-page fetches. (An earlier, much smaller delay
+           just for listing calls got us rate-limited, so listing calls now
+           pace identically to detail fetches.) Skipped/unchanged/already-
+           known items never sleep at all -- only an actual request pays
+           the delay.
+
+DB cost  : per-page freshness checks are batched into ONE query
+           (getLastUpdatesBulk) instead of one query per item, and
+           scraper/utils/db.py reuses a single connection for the whole
+           process instead of reconnecting per query -- reconnecting to a
+           remote MySQL host on every single SELECT was the actual source
+           of multi-second-per-page delays, not the API call itself.
 """
 import json
 import os
 import random
+import re
 import time
-
-import requests
-from bs4 import BeautifulSoup
 
 from scraper.auth import F95Session
 from scraper.agents.f95_detail import parse_thread_detail
+from scraper.datatypes.data import data
 from scraper.datatypes.record import gameRecord
 from scraper.utils.epoch import epoch
-from scraper.utils.parser import parser
 from scraper.utils.db import (
-    UpdatetableDynamic, getLastUpdate,
+    UpdatetableDynamic, getLastUpdate, getLastUpdatesBulk,
     getAtlasIdByF95Id, insertAtlas, updateAtlasById,
 )
 
+LATEST_DATA_URL = "https://f95zone.to/sam/latest_alpha/latest_data.php"
+
 
 def _jitter():
-    """Sleep a randomised interval between requests to avoid a regular,
-    rate-limit-tripping cadence. Tunable via F95_DELAY_MIN / F95_DELAY_MAX."""
+    """Sleep a randomised interval. Called immediately before every actual
+    outbound F95 request -- both listing/API page fetches and detail-page
+    fetches (see _fetch_detail) -- but never for items we skip, since those
+    make no request at all. Tunable via F95_DELAY_MIN / F95_DELAY_MAX."""
     lo = float(os.environ.get("F95_DELAY_MIN", "2.0"))
     hi = float(os.environ.get("F95_DELAY_MAX", "4.0"))
     if hi < lo:
@@ -36,106 +67,225 @@ def _jitter():
     time.sleep(random.uniform(lo, hi))
 
 
-def baseURL():
-    return "https://f95zone.to/forums/games.2/"
+def _list_rows():
+    """Items per listing page. Tunable via F95_LIST_ROWS (matches the rows
+    param F95's own front-end requests -- 90 -- by default)."""
+    try:
+        return int(os.environ.get("F95_LIST_ROWS", "90"))
+    except ValueError:
+        return 90
+
+
+def threadURL(thread_id):
+    # No slug needed: F95 (XenForo) redirects a numeric-only thread URL to
+    # the canonical slugged one, and requests follows redirects by default.
+    return f"https://f95zone.to/threads/{thread_id}/"
 
 
 class f95:
     def __init__(self, session=None):
         # A single authenticated session is reused for the whole run; the
         # cookie is loaded from disk and only refreshed when it expires.
+        # The listing feed doesn't strictly require auth, but reusing the
+        # same session keeps headers/cookies consistent and avoids a second
+        # code path.
         self.session = session or F95Session()
 
-    # ---- listing (public) ---------------------------------------------------
-    def getThreadPageCount(self):
-        r = requests.get(baseURL(), headers=self.session.session.headers, timeout=30)
-        if r.status_code != 200:
-            print("Listing page error:", r.status_code)
-            return 0
-        page = BeautifulSoup(r.content, "lxml")
-        nav = page.select("div.pageNavSimple")
-        if not nav:
-            return 0
-        text = nav[0].find_all("a")[0].text.strip()
-        return int(text.upper().split("OF")[1])
+    # ---- listing (JSON feed) -------------------------------------------------
+    def _fetch_listing_page(self, page_no, category="games", rows=None):
+        url = (f"{LATEST_DATA_URL}?cmd=list&cat={category}&page={page_no}"
+               f"&sort=date&rows={rows or _list_rows()}")
+        resp = self.session.get_json(url)
+        if not resp or resp.get("status") != "ok":
+            print("listing API error:", resp)
+            return None
+        return (resp.get("msg") or {}).get("data") or []
 
     # ---- main run -----------------------------------------------------------
-    def run(self, db_type, full_detail=False, max_pages=None):
+    def run(self, db_type, full_detail=False, new_only=False, ts_only=False,
+            max_pages=None, category="games"):
+        """
+        Four modes (checked in this priority order if more than one is True):
+
+        ts_only     : pure API sweep, NEVER opens a detail page. Walks the
+                      entire feed and, for any thread that's new or whose
+                      `ts` is newer than what we have, stores just the
+                      listing-level fields (title/creator/version/views/
+                      likes/rating/cover/preview screens/ts). This is the
+                      "just load every API page and capture ts" mode.
+        new_only    : API-only sweep for missing games -- walks the ENTIRE
+                      feed (no early stop) but only fetches the detail page
+                      for threads that don't exist in our DB yet. Threads we
+                      already have are left untouched even if `ts` shows
+                      newer activity.
+        full_detail : re-fetch the detail page for EVERY thread in the feed
+                      (a full re-crawl). No early stop.
+        (default)   : incremental -- new OR updated threads get a detail
+                      fetch; stops early once a page has nothing new to do,
+                      since the feed is newest-activity-first.
+
+        Pacing in every mode: the same jitter (_jitter) happens before every
+        actual request -- both listing-page fetches and detail-page
+        fetches. Skipped/unchanged/already-known items make no request at
+        all, so they never sleep.
+        """
         # Authenticate up front so we fail fast on bad credentials.
         self.session.ensure_authenticated()
 
-        total = self.getThreadPageCount()
-        pages = min(total, max_pages) if max_pages else total
-        print(f"F95: {total} listing pages (processing {pages})")
+        # The feed is sorted by latest activity, so "nothing new on this
+        # page -> stop" only holds for the plain incremental mode. The other
+        # three modes all have to walk the full feed for their own reasons
+        # (new_only: a brand-new thread can sit anywhere relative to old
+        # threads bumped by an update; full_detail: revisiting everything by
+        # definition; ts_only: the point is a complete catalog-wide sweep).
+        allow_early_stop = not (full_detail or new_only or ts_only)
 
-        for page_no in range(1, pages + 1):
-            print(f"---- listing page {page_no} ----")
-            url = baseURL() + ("?order=post_date&direction=desc" if page_no == 1
-                               else f"page-{page_no}?order=post_date&direction=desc")
+        page_no = 1
+        while True:
+            if max_pages and page_no > max_pages:
+                print(f"reached max_pages={max_pages}; stopping")
+                break
+
+            print(f"---- listing page {page_no} (API) ----")
+            _jitter()
             try:
-                r = requests.get(url, headers=self.session.session.headers, timeout=30)
-            except requests.RequestException as ex:
+                items = self._fetch_listing_page(page_no, category=category)
+            except Exception as ex:
                 print("listing fetch failed:", ex)
                 time.sleep(10)
                 continue
-            if r.status_code != 200:
-                print("listing timeout, waiting 10s")
+
+            if items is None:
+                # transient/API error -> brief backoff then retry the page
                 time.sleep(10)
                 continue
+            if not items:
+                print("listing returned no items; end of feed")
+                break
 
-            html = BeautifulSoup(r.content, "lxml")
+            # One round trip for the whole page's freshness check instead of
+            # one per item -- this is what actually made "skip everything
+            # unchanged" fast. The per-item write path (new/updated games)
+            # still does its own queries, proportional to actual changes.
+            last_updates = getLastUpdatesBulk(
+                [it.get("thread_id") for it in items], db_type
+            )
+
             processed = 0
-            for element in html.find_all("div", class_="structItem"):
+            for item in items:
                 try:
-                    if self._process_listing_item(element, db_type, full_detail):
+                    if self._process_listing_item(item, db_type, full_detail,
+                                                   new_only, ts_only,
+                                                   last_updates):
                         processed += 1
                 except Exception as ex:   # keep going on a single bad row
                     print("item error:", ex)
 
-            # Incremental runs: the listing is newest-activity-first, so once a
-            # whole page has nothing new/updated, everything below is older too
-            # -> stop crawling (no more page loads, no more waiting). Skipped
-            # games never incur a delay; only fetched detail pages do.
-            if not full_detail and processed == 0:
+            if allow_early_stop and processed == 0:
                 print("page fully up-to-date; stopping early")
                 break
-            _jitter()
 
-    def _process_listing_item(self, element, db_type, full_detail):
+            page_no += 1
+            # The _jitter() pause happens at the top of the next loop
+            # iteration, right before that page's fetch -- not here.
+
+    def _process_listing_item(self, item, db_type, full_detail,
+                               new_only=False, ts_only=False,
+                               last_updates=None):
         atlas = gameRecord.atlasRecord()
         f95rec = gameRecord.f95Record()
 
-        title_links = element.select("div.structItem-title")[0].find_all("a")
-        parser.ParseThreadItem(title_links, atlas, f95rec)
-        if atlas.get("category") == "README":
+        thread_id = item.get("thread_id")
+        if not thread_id:
             return False
+        f95rec["f95_id"] = str(thread_id)
+        f95rec["site_url"] = threadURL(thread_id)
 
-        f95rec["thread_publish_date"] = epoch.ConvertToUnixTime(
-            element.select("li.structItem-startDate")[0].find_all("a")[0]
-            .select("time")[0]["datetime"].replace("T", " ")[:-5]
-        )
-        f95rec["last_thread_comment"] = epoch.ConvertToUnixTime(
-            parser.ParseDateTimeItem(element.select("time.structItem-latestDate"))
-        )
-        f95rec["replies"] = parser.ParseReplies(element)
-        f95rec["views"] = parser.ParseViews(element)
-        f95rec["rating"] = parser.ParseRating(element)
+        # str(...) guards against the feed occasionally returning one of
+        # these as a JSON number (e.g. an unset/blank field) instead of a
+        # string -- .strip() on a bare float blows up otherwise.
+        atlas["title"] = str(item.get("title") or "").strip()
+        atlas["creator"] = str(item.get("creator") or "").strip()
+        atlas["version"] = str(item.get("version") or "").strip()
+        atlas["short_name"] = re.sub(
+            r"[\W_]+", "", atlas["title"].strip().replace(" ", "")
+        ).upper()
+        atlas["id_name"] = atlas["short_name"] + "_" + atlas["creator"].upper()
 
-        last_update = int(getLastUpdate(db_type, f95rec["f95_id"]))
+        f95rec["views"] = item.get("views") or 0
+        f95rec["likes"] = item.get("likes") or 0
+        f95rec["rating"] = item.get("rating") or 0.0
+        if item.get("cover"):
+            f95rec["banner_url"] = item["cover"]
+        if item.get("screens"):
+            # Preview-sized images from the feed. Overwritten with the full
+            # attachment screenshots below if we fetch the detail page.
+            f95rec["screens"] = ",".join(item["screens"])
+
+        # `ts` is the feed's accurate last-activity timestamp -- this is what
+        # drives change detection (replacing the old listing-page
+        # "latest reply" scrape).
+        ts = int(item.get("ts") or 0)
+        f95rec["last_thread_comment"] = ts
+
+        if last_updates is not None:
+            last_update, last_thread_updated = last_updates.get(
+                f95rec["f95_id"], (0, 0)
+            )
+            last_update = int(last_update)
+            # A row whose stored last_thread_comment already happens to be
+            # >= the feed's current ts looks "up to date" by that
+            # comparison alone -- but if thread_updated was never actually
+            # populated (true for a bunch of legacy rows from before the
+            # feed-based ts logic existed), it would stay NULL forever with
+            # nothing left to ever revisit it. Force a one-time refresh in
+            # that case regardless of the ts comparison.
+            is_stale_thread_updated = not last_thread_updated
+        else:
+            # Fallback for direct/standalone calls that didn't batch-fetch --
+            # we don't know thread_updated here, so don't force a refresh.
+            last_update = int(getLastUpdate(db_type, f95rec["f95_id"]))
+            is_stale_thread_updated = False
         is_new = last_update == 0
-        is_updated = int(f95rec["last_thread_comment"] or 0) > last_update
-        if not (is_new or is_updated or full_detail):
+        is_updated = ts > last_update or is_stale_thread_updated
+
+        if ts_only:
+            # Pure API sweep -- never opens a detail page (only the
+            # listing-page jitter applies, never an extra one per item).
+            # Still skip a write when nothing changed, so this stays cheap
+            # even walking the full catalog every time.
+            if not (is_new or is_updated):
+                return False
+            if ts:
+                f95rec["thread_updated"] = ts
+            self._update_record(atlas, f95rec, db_type)
+            return True
+
+        if new_only:
+            # API-only sweep: skip anything we already have a row for,
+            # purely a quick "do we have this thread at all" check, no
+            # detail page involved -- and so no jitter for the skip.
+            if not is_new:
+                return False
+        elif not (is_new or is_updated or full_detail):
             return False          # unchanged -> skip, no detail fetch, no delay
 
         print("detail:", f95rec["f95_id"], atlas.get("title"))
         self._fetch_detail(f95rec["site_url"], atlas, f95rec)
+
+        # `ts` from the feed is more accurate than F95's own "Thread Updated"
+        # label scraped off the thread page (devs often forget to bump it) --
+        # stamp it last so it wins over whatever _fetch_detail just set.
+        if ts:
+            f95rec["thread_updated"] = ts
 
         self._update_record(atlas, f95rec, db_type)
         return True
 
     # ---- detail (authenticated) ---------------------------------------------
     def _fetch_detail(self, site_url, atlas, f95rec):
-        _jitter()  # politeness + jitter to avoid rate limiting
+        _jitter()  # politeness + jitter to avoid rate limiting -- ONLY here,
+                   # right before an actual page load.
         r = self.session.get(site_url)
         if r.status_code != 200:
             print("detail fetch failed:", r.status_code, site_url)
@@ -145,6 +295,19 @@ class f95:
         if d.get("logged_in") is False:
             # Session died and re-login failed; skip rather than store guest data.
             print("WARNING: not logged in for", site_url, "- skipping gated fields")
+
+        # Category / engine / status come from the thread page's own prefix
+        # labels (e.g. "VN", "Ren'Py", "Completed") -- the listing feed only
+        # gives numeric prefix IDs, which we'd have to map ourselves, so the
+        # detail page remains the source of truth for these.
+        for label in d.get("prefixes") or []:
+            up = label.strip().upper()
+            if up in data.Tcategory():
+                atlas["category"] = label.strip()
+            elif up in data.Tengine():
+                atlas["engine"] = label.strip()
+            elif up in data.Tstaus():
+                atlas["status"] = label.strip()
 
         # f95-specific
         if d.get("cover_url"):
@@ -164,8 +327,9 @@ class f95:
         if d.get("likes") is not None:
             f95rec["likes"] = d.get("likes")
         if d.get("thread_updated"):
-            # F95's own "Thread Updated: YYYY-MM-DD" label on the thread page,
-            # not the time our scraper happened to run.
+            # F95's own "Thread Updated: YYYY-MM-DD" label on the thread page.
+            # Kept as a fallback; the caller overrides this with the feed's
+            # `ts` right after this call when one is available.
             f95rec["thread_updated"] = epoch.ConvertToUnixTime(d["thread_updated"])
 
         # canonical / atlas
@@ -189,9 +353,10 @@ class f95:
 
     def _update_record(self, atlas, f95rec, db_type):
         # Bookkeeping timestamp: when OUR scraper wrote this row. Distinct from
-        # f95rec["thread_updated"], which is F95's own "Thread Updated" date
-        # scraped off the page. Stamped here, right before the write, rather
-        # than back at listing-parse time.
+        # f95rec["thread_updated"], which is the feed's `ts` (or, as a
+        # fallback, F95's own "Thread Updated" date scraped off the page).
+        # Stamped here, right before the write, rather than back at
+        # listing-parse time.
         now = int(time.time())
         f95rec["last_record_update"] = now
         atlas["last_record_update"] = now

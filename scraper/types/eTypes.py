@@ -7,7 +7,10 @@ class download(Enum):
 
 
 class database(Enum):
-    LOCAL = 0
+    # SQLite/local support has been removed -- every run uses the same
+    # MySQL database. REMOTE is kept (rather than collapsing the enum
+    # entirely) so existing call sites that pass a db_type around don't all
+    # need to change.
     REMOTE = 1
 
 

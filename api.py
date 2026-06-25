@@ -2,14 +2,13 @@
 Main entry point.
 
 Usage:
-    python api.py [f95] [full] [dlsite] [package] [lewdcorner] [lc_full]
+    python api.py [f95] [full] [dlsite] [package] [lewdcorner] [lc_full] [f95_new_only] [f95_ts_only]
 each optional arg is 'true'/'false' (positional, matching the old CLI).
 
 Flow:
-    1. pick LOCAL (Windows) vs REMOTE (Linux server) DB
-    2. ensure output dirs + DB schema
-    3. scrape enabled sources (F95 detail fetches are authenticated)
-    4. build the downloadable package (base + daily update + backups)
+    1. ensure output dirs + DB schema (MySQL only)
+    2. scrape enabled sources (F95 detail fetches are authenticated)
+    3. build the downloadable package (base + daily update + backups)
 """
 import sys
 import time
@@ -40,14 +39,14 @@ def main():
     create_package = _flag(4, True)
     lc_enable = _flag(5, False)         # LewdCorner feed scrape
     lc_full = _flag(6, False)           # walk every feed page (vs. stop-early)
+    f95_new_only = _flag(7, False)      # API-only sweep: new/missing games only
+    f95_ts_only = _flag(8, False)       # pure API sweep: ts/listing fields only,
+                                         # never opens a detail page
 
     start_time = time.time()
 
     db_type = config.resolve_db_type()
-    if db_type == database.LOCAL:
-        print(f"Running LOCAL  -> SQLite (data.db)   [DB_MODE={config.db_mode()}]")
-    else:
-        print(f"Running REMOTE -> MySQL @ {config.host(database.REMOTE.value)}   [DB_MODE={config.db_mode()}]")
+    print(f"Running -> MySQL @ {config.host()}")
     print("  env:", config.env_status())
 
     createDirectories(db_type)
@@ -55,7 +54,10 @@ def main():
 
     if f95_enable:
         print("Downloading from F95")
-        f95(F95Session()).run(db_type, full_detail=f95_full)
+        f95(F95Session()).run(
+            db_type, full_detail=f95_full, new_only=f95_new_only,
+            ts_only=f95_ts_only,
+        )
 
     if dlsite_enable:
         print("Downloading from DLSITE")
@@ -67,13 +69,9 @@ def main():
         lewdcorner(LCSession()).run(db_type, full=lc_full)
 
     # Once scraping is done, build the downloadable package file.
-    # Packaging is MySQL-only, so skip it on local/SQLite dev runs.
     if create_package:
-        if db_type == database.REMOTE:
-            print("Creating package")
-            packager.createPackage(db_type, start_time)
-        else:
-            print("Packaging skipped (runs against MySQL only)")
+        print("Creating package")
+        packager.createPackage(db_type, start_time)
 
     print("All updates complete")
 

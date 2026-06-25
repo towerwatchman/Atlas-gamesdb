@@ -15,33 +15,99 @@ cp .env.example .env      # then fill in real values
 | key | purpose |
 | --- | --- |
 | `DB_USER`, `DB_PASSWORD` | database login |
-| `DB_MODE` | `remote` = always MySQL, `local` = always SQLite, `auto` = by OS |
-| `DB_NAME`, `DB_HOST_LOCAL`, `DB_HOST_REMOTE` | database location |
+| `DB_HOST` | MySQL host. **Set this explicitly** -- the old `DB_HOST_REMOTE`/`DB_HOST_LOCAL` split is gone (there's only one database now, so there's no "remote vs local" choice to make) |
+| `DB_NAME` | database name |
 | `F95_USER`, `F95_PASSWORD` | the **dummy** F95 account used to get a session cookie |
 | `F95_COOKIE_FILE` | where the reusable cookie is cached (also git-ignored) |
-| `PACKAGE_DIR_LOCAL`, `PACKAGE_DIR_REMOTE` | where packages are written |
+| `PACKAGE_DIR` | where packages are written |
 
 > The DB password that used to be hard-coded in `config.py` should be
 > rotated — it was committed in plaintext in the old version.
 
+> **There is no SQLite/local-DB mode anymore.** Every run -- dev box or
+> server -- talks to the same MySQL database over `DB_HOST`. This used to
+> be controlled by `DB_MODE`/`DB_HOST_LOCAL`/`DB_HOST_REMOTE`/`PACKAGE_DIR_LOCAL`;
+> those are gone. If you have old values for `DB_HOST_REMOTE` or
+> `DB_HOST_LOCAL` still set, `config.py` will fall back to them with a
+> warning in the source, but you should set `DB_HOST` directly. (This also
+> fixes a real bug: the old code always connected with `DB_HOST_REMOTE`
+> regardless of `DB_MODE`, so a SQLite/local run silently never touched the
+> value in `DB_HOST_LOCAL` at all -- and the SQLite path itself meant a
+> `data.db` in whatever directory you ran from, which is **not** the same
+> database as production. If atlas IDs look wrong/reset, that's almost
+> certainly what happened on an earlier run.)
+
 ## Running
 
 ```bash
-python api.py                       # scrape new/updated F95 threads, then package
-python api.py true true             # re-fetch detail for EVERY thread (full)
-python api.py false false false true  # skip sources, just rebuild the package
-python backup.py                    # rebuild a full master package
+python api.py                          # scrape new/updated F95 threads, then package
+python api.py true true                # re-fetch detail for EVERY thread (full)
+python api.py true false false true false false true   # API-only sweep: new/missing games only
+python api.py true false false true false false false true   # ts-only sweep: ts/listing fields, no detail pages ever
+python api.py false false false true   # skip sources, just rebuild the package
+python backup.py                       # rebuild a full master package
 ```
 
-`api.py` picks the database automatically: SQLite locally (Windows),
-MySQL on the server (Linux). When the scrape finishes it builds the
-downloadable package (`base`/`daily` `.update` files plus dated backups)
-in the configured package directory.
+Positional flags to `api.py` (all `true`/`false`):
 
-**Packaging is MySQL-only.** `backup.py` and the packaging step always run
-against the production MySQL (REMOTE) database — the package files and the
-`updates` table they maintain only make sense for the live DB. On a local /
-SQLite (`DB_MODE=local`) run, `api.py` scrapes as usual but skips packaging.
+| # | flag | default | meaning |
+| - | --- | --- | --- |
+| 1 | `f95_enable` | `true` | scrape F95 |
+| 2 | `f95_full` | `false` | re-fetch the detail page for every thread in the feed |
+| 3 | `dlsite_enable` | `false` | scrape DLsite |
+| 4 | `create_package` | `true` | build the downloadable package after scraping |
+| 5 | `lc_enable` | `false` | scrape LewdCorner |
+| 6 | `lc_full` | `false` | walk every LewdCorner feed page |
+| 7 | `f95_new_only` | `false` | API-only sweep, missing games only (see below) |
+| 8 | `f95_ts_only` | `false` | pure API sweep, never opens a detail page (see below) |
+
+When the scrape finishes it builds the downloadable package (`base`/`daily`
+`.update` files plus dated backups) in `PACKAGE_DIR`.
+
+### F95 listing source
+
+The F95 agent gets its listing from F95's own "latest updates" JSON feed
+(`/sam/latest_alpha/latest_data.php`) instead of scraping the forum listing
+HTML -- one fast request per page instead of parsing a full page of markup,
+and it gives an accurate `ts` (last-activity timestamp) per thread that
+replaces the unreliable "Thread Updated" label some devs forget to bump.
+Detail pages (downloads, overview, external IDs, full tag list, etc.) are
+still fetched per-thread through the authenticated session — the feed only
+gives prefix/tag IDs, not names, so it can't replace that.
+
+**Pacing**: the jitter delay (`F95_DELAY_MIN`/`F95_DELAY_MAX`) only ever
+happens immediately before an actual detail-page fetch. Listing-page (API)
+requests and any thread we skip because it's unchanged/already-known never
+sleep — a pure-API pass runs back-to-back at API speed, and walking past
+already-up-to-date games costs nothing but the DB lookup.
+
+Four run modes (`scraper/agents/f95.py`):
+
+- **Incremental** (default): walks the feed page by page; a thread gets a
+  detail fetch if it's new OR its `ts` is newer than what we have stored.
+  Stops early once a page has nothing to do, since the feed is
+  newest-activity-first.
+- **Full** (`f95_full=true`): re-fetches the detail page for every thread,
+  no early stop.
+- **New-only / API-only sweep** (`f95_new_only=true`): walks the *entire*
+  feed (no early stop -- a brand-new thread can land anywhere in the
+  activity-sorted order) but only triggers a detail fetch for threads we
+  don't have a row for at all. Existing threads are left alone even if
+  their `ts` shows newer activity. Use this to backfill games the
+  incremental crawl missed without re-touching anything you already have.
+- **Ts-only sweep** (`f95_ts_only=true`): the lightest mode -- walks the
+  entire feed and, for any new-or-changed thread, stores only what the
+  feed itself gives us (title, creator, version, views, likes, rating,
+  cover, preview screenshots, and `ts`/`thread_updated`). **Never opens a
+  detail page, for new games either** -- so it never sleeps at all. Use
+  this to keep the whole catalog's listing-level metadata fresh quickly;
+  follow it with an incremental or new-only run later to backfill full
+  detail (downloads, overview, etc.) on whatever it found.
+
+```bash
+python api.py true false false true false false true    # new-only sweep
+python api.py true false false true false false false true  # ts-only sweep
+```
 
 The Atlas client polls `https://<host>/api/updates`, compares the list to its
 local update history, and downloads any newer `.update` files from

@@ -37,25 +37,17 @@ def _require(key):
 
 class config:
     # ----- Database -----
+    # MySQL only -- there is no SQLite/local fallback. Every run, dev or
+    # production, talks to the same database server.
     @staticmethod
     def env_status():
         return _ENV_STATUS
 
     @staticmethod
-    def db_mode():
-        # "remote" -> always MySQL, "local" -> always SQLite, "auto" -> by OS
-        return os.environ.get("DB_MODE", "auto").lower()
-
-    @staticmethod
     def resolve_db_type():
-        import sys
-        mode = config.db_mode()
-        if mode == "remote":
-            return database.REMOTE
-        if mode == "local":
-            return database.LOCAL
-        # auto: SQLite on Windows dev box, MySQL on the Linux server
-        return database.LOCAL if sys.platform == "win32" else database.REMOTE
+        # Kept for call-site compatibility (api.py / backup.py reference a
+        # "db_type" enum value) but there is now only one database.
+        return database.REMOTE
 
     @staticmethod
     def db_user():
@@ -66,11 +58,27 @@ class config:
         return _require("DB_PASSWORD")
 
     @staticmethod
-    def host(db_type):
-        # db_type: 1 / REMOTE -> remote host, else local
-        remote = os.environ.get("DB_HOST_REMOTE", "localhost")
-        local = os.environ.get("DB_HOST_LOCAL", "localhost")
-        return remote if int(db_type) == 1 else local
+    def db_host():
+        host = os.environ.get("DB_HOST")
+        if host:
+            return host
+        # Back-compat with the old LOCAL/REMOTE split: DB_HOST_REMOTE was the
+        # value actually used for every real MySQL connection (DB_HOST_LOCAL
+        # was never read by the connection code). If you still have these
+        # set, double-check DB_HOST_REMOTE is genuinely reachable from
+        # wherever this runs -- "localhost" only works when this script runs
+        # ON the database server itself. Set DB_HOST explicitly to silence
+        # this fallback.
+        legacy = os.environ.get("DB_HOST_REMOTE") or os.environ.get("DB_HOST_LOCAL")
+        if legacy:
+            return legacy
+        return _require("DB_HOST")
+
+    @staticmethod
+    def host(_unused_db_type=None):
+        # _unused_db_type kept only so existing call sites that pass
+        # database.REMOTE.value etc. don't need to change.
+        return config.db_host()
 
     @staticmethod
     def database():
@@ -110,7 +118,11 @@ class config:
 
     # ----- Output -----
     @staticmethod
-    def package_dir(db_type):
-        if int(db_type) == 1:
-            return os.environ.get("PACKAGE_DIR_REMOTE", "/var/www/html/packages")
-        return os.environ.get("PACKAGE_DIR_LOCAL", "C:/packages")
+    def package_dir(_unused_db_type=None):
+        dir_ = os.environ.get("PACKAGE_DIR")
+        if dir_:
+            return dir_
+        # Back-compat: PACKAGE_DIR_LOCAL was never actually used (packaging
+        # has always forced database.REMOTE -- see packager.py), so
+        # PACKAGE_DIR_REMOTE is the value that matters.
+        return os.environ.get("PACKAGE_DIR_REMOTE", "/var/www/html/packages")

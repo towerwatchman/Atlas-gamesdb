@@ -5,16 +5,11 @@ class query:
     def __init__(self) -> None:
         pass
 
-    def createAtlasTable(type):
-        us = ""
-        if type == database.REMOTE:
-            us = "_"
+    def createAtlasTable(type=None):
         query = (
             """
                CREATE TABLE IF NOT EXISTS atlas (
-                    atlas_id INTEGER NOT NULL PRIMARY KEY AUTO"""
-            + us
-            + """INCREMENT,
+                    atlas_id INTEGER NOT NULL PRIMARY KEY AUTO_INCREMENT,
                     title TINYTEXT NOT NULL, 
                     id_name VARCHAR(255) NOT NULL,
                     short_name TINYTEXT NOT NULL,
@@ -78,10 +73,7 @@ class query:
         query = "DROP TABLE IF EXISTS `" + table + "`;"
         return query
 
-    def createUpdateTable(type):
-        us = ""
-        if type == database.REMOTE:
-            us = "_"
+    def createUpdateTable(type=None):
         query = """
                 CREATE TABLE IF NOT EXISTS updates (
                     date BIGINT PRIMARY KEY NOT NULL,
@@ -91,10 +83,7 @@ class query:
             """
         return query
 
-    def createDlsiteCircleTable(type):
-        us = ""
-        if type == database.REMOTE:
-            us = "_"
+    def createDlsiteCircleTable(type=None):
         query = """
                 CREATE TABLE IF NOT EXISTS dlsite_circle (
                     circle_id INT PRIMARY KEY NOT NULL UNIQUE,

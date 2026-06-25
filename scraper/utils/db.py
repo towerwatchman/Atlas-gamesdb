@@ -1,27 +1,27 @@
 """
-Database access layer.
+Database access layer. MySQL only -- there is no SQLite/local fallback.
 
-LOCAL  -> SQLite (data.db, Windows dev box)
-REMOTE -> MySQL  (server)
+Connection handling: a single connection is opened once and reused for the
+whole process, instead of opening a fresh connection per query. Reconnecting
+to a remote MySQL host (TCP + auth handshake) on every single SELECT/INSERT
+has real, noticeable latency, and it was the actual cause of multi-second
+per-listing-page delays -- a page of ~90 items does at least one query per
+item (more for ones that get written), so that overhead was being paid
+hundreds of times per page. _run() below reconnects automatically, but only
+when a query actually fails because the connection had genuinely dropped.
 
 Refactor notes vs the original:
-  * One _connect() helper instead of ~8 copies of the connect block.
+  * One _run() helper instead of ~13 copies of the connect/cursor/close block.
   * Parameterised queries everywhere (no string-built WHERE clauses).
   * Table names are whitelisted before being interpolated.
-  * MySQL upsert uses %s placeholders (the old code mixed ? and %s).
   * Credentials come from the environment via config (no plaintext here).
 """
-import os
-import sqlite3 as sl
-from pathlib import Path
-
 import mysql.connector
+from mysql.connector import errors as mysql_errors
 
 from scraper.tables.base import query
 from scraper.types.eTypes import database
 from scraper.config import config
-
-dbName = "data.db"
 
 # Only these tables may be interpolated into SQL (defence against injection
 # via scraped data flowing into table/column positions).
@@ -30,6 +30,8 @@ ALLOWED_TABLES = {
     "lewdcorner", "sxs", "test",
 }
 
+_conn = None  # the one shared connection for this process; see _connect().
+
 
 def _check_table(table):
     if table not in ALLOWED_TABLES:
@@ -37,78 +39,97 @@ def _check_table(table):
     return table
 
 
-def _connect(db_type):
-    """Return (connection, paramstyle). paramstyle is '?' (sqlite) or '%s' (mysql)."""
-    if db_type == database.LOCAL:
-        return sl.connect(dbName), "?"
-    return (
-        mysql.connector.connect(
-            user=config.db_user(),
-            password=config.db_password(),
-            host=config.host(database.REMOTE.value),
-            database=config.database(),
-        ),
-        "%s",
+def _new_connection():
+    return mysql.connector.connect(
+        user=config.db_user(),
+        password=config.db_password(),
+        host=config.host(),
+        database=config.database(),
     )
+
+
+def _connect(db_type=None):
+    """Return (connection, "%s"). db_type is accepted-but-ignored for
+    call-site compatibility. Opens a connection on first use only; after
+    that, _run() reuses it and only reconnects if a query actually fails."""
+    global _conn
+    if _conn is None:
+        _conn = _new_connection()
+    return _conn, "%s"
+
+
+def _run(sql, params=(), commit=False, fetch=None, dict_cursor=False):
+    """Execute one statement on the shared connection. Reconnects and
+    retries exactly once if the connection had genuinely dropped (e.g. an
+    idle timeout during a long-running scrape) -- not on every call."""
+    global _conn
+    for attempt in (1, 2):
+        con, _ = _connect()
+        try:
+            cur = con.cursor(dictionary=True) if dict_cursor else con.cursor()
+            cur.execute(sql, params)
+            if commit:
+                con.commit()
+            if fetch == "one":
+                result = cur.fetchone()
+            elif fetch == "all":
+                result = cur.fetchall()
+            elif commit:
+                result = cur.lastrowid
+            else:
+                result = None
+            cur.close()
+            return result
+        except mysql_errors.OperationalError:
+            # Connection actually dropped -- drop it and let the next loop
+            # iteration open a fresh one and retry once.
+            try:
+                con.close()
+            except Exception:
+                pass
+            _conn = None
+            if attempt == 2:
+                raise
 
 
 # ---------------------------------------------------------------- writes
 
-def UpdatetableDynamic(table, values, db_type):
+def UpdatetableDynamic(table, values, db_type=None):
     """Upsert a dict of column->value into `table`."""
     _check_table(table)
     if not values:
         return
-    con, ph = _connect(db_type)
-    try:
-        cols = list(values.keys())
-        col_sql = ", ".join(cols)
-        placeholders = ", ".join([ph] * len(cols))
-        params = [int(v) if isinstance(v, bool) else v for v in values.values()]
-
-        if db_type == database.LOCAL:
-            sql = f"INSERT OR REPLACE INTO {table} ({col_sql}) VALUES ({placeholders})"
-        else:
-            updates = ", ".join(f"{c}=VALUES({c})" for c in cols)
-            sql = (
-                f"INSERT INTO {table} ({col_sql}) VALUES ({placeholders}) "
-                f"ON DUPLICATE KEY UPDATE {updates}"
-            )
-        cur = con.cursor()
-        cur.execute(sql, params)
-        con.commit()
-        cur.close()
-    finally:
-        con.close()
+    cols = list(values.keys())
+    col_sql = ", ".join(cols)
+    placeholders = ", ".join(["%s"] * len(cols))
+    params = [int(v) if isinstance(v, bool) else v for v in values.values()]
+    updates = ", ".join(f"{c}=VALUES({c})" for c in cols)
+    sql = (
+        f"INSERT INTO {table} ({col_sql}) VALUES ({placeholders}) "
+        f"ON DUPLICATE KEY UPDATE {updates}"
+    )
+    _run(sql, params, commit=True)
 
 
-def insertAtlas(values, db_type):
+def insertAtlas(values, db_type=None):
     """Insert a brand-new atlas row and return its generated atlas_id.
 
     Used for threads we have never seen before. Plain INSERT (no REPLACE) so
-    the AUTOINCREMENT atlas_id is assigned once and never churns.
+    the AUTO_INCREMENT atlas_id is assigned once and never churns.
     """
     if not values:
         raise ValueError("insertAtlas called with empty values")
-    con, ph = _connect(db_type)
-    try:
-        cols = list(values.keys())
-        col_sql = ", ".join(cols)
-        placeholders = ", ".join([ph] * len(cols))
-        params = [int(v) if isinstance(v, bool) else v for v in values.values()]
-        cur = con.cursor()
-        cur.execute(
-            f"INSERT INTO atlas ({col_sql}) VALUES ({placeholders})", params
-        )
-        con.commit()
-        new_id = cur.lastrowid
-        cur.close()
-        return new_id
-    finally:
-        con.close()
+    cols = list(values.keys())
+    col_sql = ", ".join(cols)
+    placeholders = ", ".join(["%s"] * len(cols))
+    params = [int(v) if isinstance(v, bool) else v for v in values.values()]
+    return _run(
+        f"INSERT INTO atlas ({col_sql}) VALUES ({placeholders})",
+        params, commit=True,
+    )
 
 
-def updateAtlasById(atlas_id, values, db_type):
+def updateAtlasById(atlas_id, values, db_type=None):
     """Update an existing atlas row in place, located by its atlas_id.
 
     Used for threads we already have (resolved via f95_id). Updating by the
@@ -116,192 +137,135 @@ def updateAtlasById(atlas_id, values, db_type):
     """
     if not values:
         return
-    con, ph = _connect(db_type)
-    try:
-        cols = [c for c in values.keys() if c != "atlas_id"]
-        if not cols:
-            return
-        set_sql = ", ".join(f"{c} = {ph}" for c in cols)
-        params = [int(values[c]) if isinstance(values[c], bool) else values[c]
-                  for c in cols]
-        params.append(atlas_id)
-        cur = con.cursor()
-        cur.execute(f"UPDATE atlas SET {set_sql} WHERE atlas_id = {ph}", params)
-        con.commit()
-        cur.close()
-    finally:
-        con.close()
+    cols = [c for c in values.keys() if c != "atlas_id"]
+    if not cols:
+        return
+    set_sql = ", ".join(f"{c} = %s" for c in cols)
+    params = [int(values[c]) if isinstance(values[c], bool) else values[c]
+              for c in cols]
+    params.append(atlas_id)
+    _run(f"UPDATE atlas SET {set_sql} WHERE atlas_id = %s", params, commit=True)
 
 
-def TruncateLocalUpdatesTable(db_type):
-    con, _ = _connect(db_type)
-    try:
-        cur = con.cursor()
-        cur.execute("DELETE FROM updates")
-        con.commit()
-        cur.close()
-    finally:
-        con.close()
+def TruncateUpdatesTable(db_type=None):
+    _run("DELETE FROM updates", commit=True)
 
 
 # ---------------------------------------------------------------- schema
 
-def CreateDatabase(db_type):
-    con, _ = _connect(db_type)
-    try:
-        cur = con.cursor()
-        for stmt in (
-            query.createAtlasTable(db_type),
-            query.createF95Table(db_type),
-            query.createUpdateTable(db_type),
-            query.createDlsiteCircleTable(db_type),
-            query.createDlsiteTable(db_type),
-            query.createLewdcornereTable(db_type),
-            query.createSxsTable(db_type),
-        ):
-            cur.execute(stmt)
-        con.commit()
-        cur.close()
-    finally:
-        con.close()
+def CreateDatabase(db_type=None):
+    for stmt in (
+        query.createAtlasTable(db_type),
+        query.createF95Table(db_type),
+        query.createUpdateTable(db_type),
+        query.createDlsiteCircleTable(db_type),
+        query.createDlsiteTable(db_type),
+        query.createLewdcornereTable(db_type),
+        query.createSxsTable(db_type),
+    ):
+        _run(stmt, commit=True)
 
 
-def DeleteTables(db_type):
-    con, _ = _connect(db_type)
-    try:
-        cur = con.cursor()
-        for t in ("atlas", "test", "f95_zone"):
-            cur.execute(query.deleteTable(_check_table(t)))
-        con.commit()
-        cur.close()
-    finally:
-        con.close()
-
-
-def DeleteDatabase(db_type):
-    if db_type == database.LOCAL and Path(dbName).is_file():
-        os.remove(dbName)
+def DeleteTables(db_type=None):
+    for t in ("atlas", "test", "f95_zone"):
+        _run(query.deleteTable(_check_table(t)), commit=True)
 
 
 # ---------------------------------------------------------------- reads
 
 def getLastUpdate(db_type, f95_id):
-    con, ph = _connect(db_type)
-    try:
-        cur = con.cursor()
-        cur.execute(
-            f"SELECT last_thread_comment FROM f95_zone WHERE f95_id = {ph}",
-            (f95_id,),
-        )
-        row = cur.fetchone()
-        cur.close()
-        return row[0] if row and row[0] is not None else 0
-    finally:
-        con.close()
+    row = _run(
+        "SELECT last_thread_comment FROM f95_zone WHERE f95_id = %s",
+        (f95_id,), fetch="one",
+    )
+    return row[0] if row and row[0] is not None else 0
 
 
-def getAtlasIdByF95Id(f95_id, db_type):
+def getLastUpdatesBulk(f95_ids, db_type=None):
+    """Batch version of getLastUpdate: one round trip for a whole page of
+    items instead of one round trip per item. Returns {f95_id: last_thread_
+    comment}; ids with no row (or a NULL value) are simply absent, so the
+    caller should default missing keys to 0, same as getLastUpdate does."""
+    ids = [str(i) for i in f95_ids if i is not None]
+    if not ids:
+        return {}
+    placeholders = ", ".join(["%s"] * len(ids))
+    rows = _run(
+        f"SELECT f95_id, last_thread_comment FROM f95_zone "
+        f"WHERE f95_id IN ({placeholders})",
+        ids, fetch="all",
+    ) or []
+    return {
+        str(f95_id): (last_thread_comment or 0)
+        for f95_id, last_thread_comment in rows
+    }
+
+
+def getAtlasIdByF95Id(f95_id, db_type=None):
     """Return the atlas_id already linked to this f95 thread, or 0 if unseen.
 
     This is the canonical way to find an existing f95 game: the thread's
     f95_id is stable, unlike the title-derived id_name.
     """
-    con, ph = _connect(db_type)
-    try:
-        cur = con.cursor()
-        cur.execute(f"SELECT atlas_id FROM f95_zone WHERE f95_id = {ph}", (f95_id,))
-        row = cur.fetchone()
-        cur.close()
-        return row[0] if row else 0
-    finally:
-        con.close()
+    row = _run(
+        "SELECT atlas_id FROM f95_zone WHERE f95_id = %s",
+        (f95_id,), fetch="one",
+    )
+    return row[0] if row else 0
 
 
-def atlasOwnedByOtherSource(atlas_id, db_type):
+def atlasOwnedByOtherSource(atlas_id, db_type=None):
     """True if this atlas row is referenced by a NON-lewdcorner source table
     (f95_zone, dlsite, sxs). Used so the LewdCorner agent never overwrites the
     atlas fields of a game that another source created/owns -- it only links a
     lewdcorner row to it."""
-    con, ph = _connect(db_type)
-    try:
-        cur = con.cursor()
-        for tbl in ("f95_zone", "dlsite", "sxs"):
-            try:
-                cur.execute(f"SELECT 1 FROM {tbl} WHERE atlas_id = {ph} LIMIT 1",
-                            (atlas_id,))
-                if cur.fetchone():
-                    cur.close()
-                    return True
-            except Exception:
-                # Table may not exist on a partial dev DB; ignore and continue.
-                pass
-        cur.close()
-        return False
-    finally:
-        con.close()
+    for tbl in ("f95_zone", "dlsite", "sxs"):
+        try:
+            row = _run(
+                f"SELECT 1 FROM {tbl} WHERE atlas_id = %s LIMIT 1",
+                (atlas_id,), fetch="one",
+            )
+            if row:
+                return True
+        except Exception:
+            # Table may not exist on a partial dev DB; ignore and continue.
+            pass
+    return False
 
 
-def getAtlasIdByLcId(lc_id, db_type):
+def getAtlasIdByLcId(lc_id, db_type=None):
     """Return the atlas_id already linked to this LewdCorner thread, or 0 if
     unseen. The LewdCorner thread id (lc_id) is stable, so this is the
     canonical way to find a row we've scraped before and update it in place
     rather than inserting a duplicate."""
-    con, ph = _connect(db_type)
-    try:
-        cur = con.cursor()
-        cur.execute(f"SELECT atlas_id FROM lewdcorner WHERE lc_id = {ph}", (lc_id,))
-        row = cur.fetchone()
-        cur.close()
-        return row[0] if row else 0
-    finally:
-        con.close()
+    row = _run(
+        "SELECT atlas_id FROM lewdcorner WHERE lc_id = %s",
+        (lc_id,), fetch="one",
+    )
+    return row[0] if row else 0
 
 
-def findIdByTitle(table, id_name, db_type):
+def findIdByTitle(table, id_name, db_type=None):
     _check_table(table)
-    con, ph = _connect(db_type)
-    try:
-        cur = con.cursor()
-        cur.execute(f"SELECT atlas_id FROM {table} WHERE id_name = {ph}", (id_name,))
-        row = cur.fetchone()
-        cur.close()
-        return row[0] if row else 0
-    finally:
-        con.close()
+    row = _run(
+        f"SELECT atlas_id FROM {table} WHERE id_name = %s",
+        (id_name,), fetch="one",
+    )
+    return row[0] if row else 0
 
 
-def findDlsiteMaker(table, circle_id, db_type):
+def findDlsiteMaker(table, circle_id, db_type=None):
     _check_table(table)
-    con, ph = _connect(db_type)
-    try:
-        cur = con.cursor()
-        cur.execute(f"SELECT name FROM {table} WHERE circle_id = {ph}", (circle_id,))
-        row = cur.fetchone()
-        cur.close()
-        return row[0] if row else 0
-    finally:
-        con.close()
+    row = _run(
+        f"SELECT name FROM {table} WHERE circle_id = %s",
+        (circle_id,), fetch="one",
+    )
+    return row[0] if row else 0
 
 
 def downloadBase(db_type, table, start_time):
     _check_table(table)
-    con, ph = _connect(db_type)
-    try:
-        if db_type == database.LOCAL:
-            con.row_factory = dict_factory
-            cur = con.cursor()
-        else:
-            cur = con.cursor(dictionary=True)
-        cur.execute(
-            f"SELECT * FROM {table} WHERE last_record_update > {ph} ORDER BY atlas_id",
-            (start_time,),
-        )
-        data = cur.fetchall()
-        cur.close()
-        return data
-    finally:
-        con.close()
-
-
-def dict_factory(cursor, row):
-    return {col[0]: row[idx] for idx, col in enumerate(cursor.description)}
+    return _run(
+        f"SELECT * FROM {table} WHERE last_record_update > %s ORDER BY atlas_id",
+        (start_time,), fetch="all", dict_cursor=True,
+    )
