@@ -111,8 +111,9 @@ class f95:
                       entire feed and, for any thread that's new or whose
                       `ts` is newer than what we have, stores just the
                       listing-level fields (title/creator/version/views/
-                      likes/rating/cover/preview screens/ts). This is the
-                      "just load every API page and capture ts" mode.
+                      likes/rating/ts). Never touches banner_url/screens --
+                      those only ever come from the real detail page. This
+                      is the "just load every API page and capture ts" mode.
         new_only    : API-only sweep for missing games -- walks the ENTIRE
                       feed (no early stop) but only fetches the detail page
                       for threads that don't exist in our DB yet. Threads we
@@ -215,12 +216,13 @@ class f95:
         f95rec["views"] = item.get("views") or 0
         f95rec["likes"] = item.get("likes") or 0
         f95rec["rating"] = item.get("rating") or 0.0
-        if item.get("cover"):
-            f95rec["banner_url"] = item["cover"]
-        if item.get("screens"):
-            # Preview-sized images from the feed. Overwritten with the full
-            # attachment screenshots below if we fetch the detail page.
-            f95rec["screens"] = ",".join(item["screens"])
+        # Deliberately NOT pulling item["cover"]/item["screens"] here. Those
+        # are low-res preview thumbnails from the listing feed, not the
+        # actual game images -- banner_url/screens should only ever be set
+        # from the real detail page (see _fetch_detail's d["cover_url"] /
+        # d["screens"]). In ts_only mode, which never visits the detail
+        # page, that means these columns simply stay whatever they already
+        # were (untouched) rather than getting filled with thumbnails.
 
         # `ts` is the feed's accurate last-activity timestamp -- this is what
         # drives change detection (replacing the old listing-page
