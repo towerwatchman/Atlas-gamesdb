@@ -1,7 +1,10 @@
 <?php
 // /api/updates  -  returns the full `updates` table as a JSON array of
-// {date, name, md5} for the Atlas client. The client compares these to its
-// local update history and downloads any newer .update files from /packages/.
+// {date, name, md5, full} for the Atlas client. The client compares these
+// to its local update history and downloads any newer .update files from
+// /packages/. The `full` boolean tells the client whether a package
+// contains the complete dataset (true) or only records updated since the
+// last run (false / snapshot).
 //
 // Served via an Apache Alias:  Alias /api/updates /var/www/html/api/updates.php
 // Uses a READ-ONLY MySQL user; credentials live outside the web root.
@@ -18,9 +21,10 @@ if (!$conn) {
 }
 
 $result = [];   // ensure an empty table returns [] (a valid JSON array), not null
-if ($query = mysqli_query($conn, "SELECT date, name, md5 FROM updates ORDER BY date DESC")) {
+if ($query = mysqli_query($conn, "SELECT date, name, md5, is_full FROM updates ORDER BY date DESC")) {
     while ($row = $query->fetch_assoc()) {
-        $row['date'] = (int) $row['date'];   // numeric date; name/md5 stay strings
+        $row['date']    = (int) $row['date'];        // numeric epoch
+        $row['is_full'] = (bool) $row['is_full'];    // tinyint -> JSON true/false
         $result[] = $row;
     }
 }

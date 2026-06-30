@@ -187,8 +187,13 @@ def DeleteTables(db_type=None):
 # ---------------------------------------------------------------- reads
 
 def getLastUpdate(db_type, f95_id):
+    """Returns the stored thread_updated for this f95_id, or 0 if unseen/
+    unset. thread_updated -- not last_thread_comment -- is the freshness
+    comparison field: last_thread_comment (raw forum reply activity) was
+    producing too many false positives, since a thread can get new replies
+    without the game itself actually updating."""
     row = _run(
-        "SELECT last_thread_comment FROM f95_zone WHERE f95_id = %s LIMIT 1",
+        "SELECT thread_updated FROM f95_zone WHERE f95_id = %s LIMIT 1",
         (f95_id,), fetch="one",
     )
     return row[0] if row and row[0] is not None else 0
@@ -197,28 +202,45 @@ def getLastUpdate(db_type, f95_id):
 def getLastUpdatesBulk(f95_ids, db_type=None):
     """Batch version of getLastUpdate: one round trip for a whole page of
     items instead of one round trip per item. Returns
-    {f95_id: (last_thread_comment, thread_updated)}. Ids with no row are
-    simply absent, so the caller should default missing keys to (0, None).
-
-    thread_updated is included specifically so a row whose stored
-    last_thread_comment already happens to be >= the feed's current `ts`
-    (true for plenty of legacy rows written before the feed-based ts logic
-    existed) isn't treated as permanently "up to date" while its
-    thread_updated sits NULL forever -- the caller should force a refresh
-    when thread_updated is missing, regardless of the ts comparison."""
+    {f95_id: thread_updated}; ids with no row (or a NULL value) are simply
+    absent, so the caller should default missing keys to 0."""
     ids = [str(i) for i in f95_ids if i is not None]
     if not ids:
         return {}
     placeholders = ", ".join(["%s"] * len(ids))
     rows = _run(
-        f"SELECT f95_id, last_thread_comment, thread_updated FROM f95_zone "
+        f"SELECT f95_id, thread_updated FROM f95_zone "
         f"WHERE f95_id IN ({placeholders})",
         ids, fetch="all",
     ) or []
-    return {
-        str(f95_id): (last_thread_comment or 0, thread_updated or 0)
-        for f95_id, last_thread_comment, thread_updated in rows
-    }
+    return {str(f95_id): (thread_updated or 0) for f95_id, thread_updated in rows}
+
+
+def getLcThreadUpdated(lc_id, db_type=None):
+    """LewdCorner equivalent of getLastUpdate: stored thread_updated for
+    this lc_id, or 0 if unseen/unset."""
+    row = _run(
+        "SELECT thread_updated FROM lewdcorner WHERE lc_id = %s LIMIT 1",
+        (lc_id,), fetch="one",
+    )
+    return row[0] if row and row[0] is not None else 0
+
+
+def getLcThreadUpdatesBulk(lc_ids, db_type=None):
+    """Batch version of getLcThreadUpdated -- one round trip for a whole
+    page instead of one per item. Returns {lc_id: thread_updated}; ids with
+    no row are simply absent, so the caller should default missing keys
+    to 0."""
+    ids = [str(i) for i in lc_ids if i is not None]
+    if not ids:
+        return {}
+    placeholders = ", ".join(["%s"] * len(ids))
+    rows = _run(
+        f"SELECT lc_id, thread_updated FROM lewdcorner "
+        f"WHERE lc_id IN ({placeholders})",
+        ids, fetch="all",
+    ) or []
+    return {str(lc_id): (thread_updated or 0) for lc_id, thread_updated in rows}
 
 
 def getAtlasIdByF95Id(f95_id, db_type=None):

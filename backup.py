@@ -18,7 +18,7 @@ def main():
     createDirectories(db_type)
     # Clear previous update records, then create a master (start_time=0).
     TruncateUpdatesTable(db_type)
-    packager.createPackage(db_type, 0)
+    packager.createFullPackage(db_type, 0)
     print("Master package created")
 
 

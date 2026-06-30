@@ -11,8 +11,12 @@ Listing  : the public "latest updates" JSON feed used by F95's own
            us a `ts` field per thread -- the real timestamp of the latest
            activity. That's more reliable than F95's own "Thread Updated"
            label on the thread page itself (devs often forget to bump it),
-           so `ts` is what drives change-detection AND what we store as
-           `thread_updated`, overriding whatever the detail-page label says.
+           so `ts` is what we store as `thread_updated`, overriding
+           whatever the detail-page label says. Change detection compares
+           the feed's `ts` against the stored `thread_updated` column --
+           NOT against last_thread_comment (raw forum reply activity),
+           which produced too many false positives since a thread can get
+           new replies without the game itself actually updating.
 
 Detail   : each new/updated thread is still fetched through an AUTHENTICATED
            session so the guest-gated content (external IDs, downloads,
@@ -41,6 +45,7 @@ import os
 import random
 import re
 import time
+from datetime import datetime, timezone
 
 from scraper.auth import F95Session
 from scraper.agents.f95_detail import parse_thread_detail
@@ -76,6 +81,25 @@ def _list_rows():
         return 90
 
 
+def _debug_enabled():
+    """Set F95_DEBUG_TS=true to print, for EVERY item the feed returns
+    (changed or not), the API's current `ts` side by side with what's
+    stored in the DB as thread_updated -- the exact two values that drive
+    change detection. Useful for confirming, against a live run, where in
+    the feed the stored values stop matching the API's (i.e. where the
+    catalog's thread_updated backfill actually left off)."""
+    return os.environ.get("F95_DEBUG_TS", "false").lower() == "true"
+
+
+def _fmt_ts(ts):
+    if not ts:
+        return "(unset)"
+    try:
+        return f"{ts} ({datetime.fromtimestamp(ts, tz=timezone.utc).date()})"
+    except (ValueError, OSError, OverflowError):
+        return str(ts)
+
+
 def threadURL(thread_id):
     # No slug needed: F95 (XenForo) redirects a numeric-only thread URL to
     # the canonical slugged one, and requests follows redirects by default.
@@ -93,13 +117,35 @@ class f95:
 
     # ---- listing (JSON feed) -------------------------------------------------
     def _fetch_listing_page(self, page_no, category="games", rows=None):
+        """Returns (items, total_pages). total_pages comes from the feed's
+        own pagination.total field, e.g.:
+            {"status": "ok", "msg": {"data": [...],
+                "pagination": {"page": 1, "total": 877}, "count": 26297}}
+
+        This matters because F95 does NOT return an empty page once you
+        page past the real end -- it just keeps re-serving the last page's
+        data forever. Relying on "items is empty -> stop" alone means the
+        crawl never terminates; total_pages is the only reliable signal for
+        where the feed actually ends.
+
+        Returns (None, None) on an API error/transient failure (caller
+        retries); returns (items, total_pages) -- total_pages may be None
+        if the feed response is missing pagination, in which case the
+        caller falls back to the old empty-page heuristic."""
         url = (f"{LATEST_DATA_URL}?cmd=list&cat={category}&page={page_no}"
                f"&sort=date&rows={rows or _list_rows()}")
         resp = self.session.get_json(url)
         if not resp or resp.get("status") != "ok":
             print("listing API error:", resp)
-            return None
-        return (resp.get("msg") or {}).get("data") or []
+            return None, None
+        msg = resp.get("msg") or {}
+        items = msg.get("data") or []
+        total_pages = (msg.get("pagination") or {}).get("total")
+        try:
+            total_pages = int(total_pages) if total_pages is not None else None
+        except (TypeError, ValueError):
+            total_pages = None
+        return items, total_pages
 
     # ---- main run -----------------------------------------------------------
     def run(self, db_type, full_detail=False, new_only=False, ts_only=False,
@@ -142,6 +188,7 @@ class f95:
         allow_early_stop = not (full_detail or new_only or ts_only)
 
         page_no = 1
+        prev_page_ids = None
         while True:
             if max_pages and page_no > max_pages:
                 print(f"reached max_pages={max_pages}; stopping")
@@ -150,7 +197,7 @@ class f95:
             print(f"---- listing page {page_no} (API) ----")
             _jitter()
             try:
-                items = self._fetch_listing_page(page_no, category=category)
+                items, total_pages = self._fetch_listing_page(page_no, category=category)
             except Exception as ex:
                 print("listing fetch failed:", ex)
                 time.sleep(10)
@@ -163,6 +210,30 @@ class f95:
             if not items:
                 print("listing returned no items; end of feed")
                 break
+
+            # F95 does NOT return an empty page once you page past the real
+            # end -- it just keeps re-serving the last page's data forever.
+            # pagination.total (from the feed itself) is the reliable signal
+            # for where the feed actually ends; without it we'd loop forever
+            # past the real last page, since "items is empty" never happens.
+            if total_pages and page_no >= total_pages:
+                print(f"reached last page per feed pagination "
+                      f"(page {page_no}/{total_pages}); stopping after this page")
+                stop_after_this_page = True
+            else:
+                stop_after_this_page = False
+
+            # Fallback safety net for the same problem, in case a future
+            # response is ever missing pagination entirely: if this page's
+            # items are EXACTLY the same set as the previous page's, we've
+            # walked past the real end and the feed is just repeating itself.
+            current_page_ids = frozenset(it.get("thread_id") for it in items)
+            if not stop_after_this_page and prev_page_ids is not None \
+                    and current_page_ids == prev_page_ids:
+                print("page is identical to the previous page (no pagination "
+                      "info available) -- past the real end of the feed; stopping")
+                break
+            prev_page_ids = current_page_ids
 
             # One round trip for the whole page's freshness check instead of
             # one per item -- this is what actually made "skip everything
@@ -184,6 +255,9 @@ class f95:
 
             if allow_early_stop and processed == 0:
                 print("page fully up-to-date; stopping early")
+                break
+
+            if stop_after_this_page:
                 break
 
             page_no += 1
@@ -224,32 +298,32 @@ class f95:
         # page, that means these columns simply stay whatever they already
         # were (untouched) rather than getting filled with thumbnails.
 
-        # `ts` is the feed's accurate last-activity timestamp -- this is what
-        # drives change detection (replacing the old listing-page
-        # "latest reply" scrape).
+        # `ts` is the feed's accurate last-activity timestamp. It's still
+        # stored as last_thread_comment for reference/display, but it is
+        # NOT used for change detection anymore -- see is_updated below,
+        # which compares against thread_updated instead.
         ts = int(item.get("ts") or 0)
         f95rec["last_thread_comment"] = ts
 
         if last_updates is not None:
-            last_update, last_thread_updated = last_updates.get(
-                f95rec["f95_id"], (0, 0)
-            )
-            last_update = int(last_update)
-            # A row whose stored last_thread_comment already happens to be
-            # >= the feed's current ts looks "up to date" by that
-            # comparison alone -- but if thread_updated was never actually
-            # populated (true for a bunch of legacy rows from before the
-            # feed-based ts logic existed), it would stay NULL forever with
-            # nothing left to ever revisit it. Force a one-time refresh in
-            # that case regardless of the ts comparison.
-            is_stale_thread_updated = not last_thread_updated
+            last_update = int(last_updates.get(f95rec["f95_id"], 0))
         else:
-            # Fallback for direct/standalone calls that didn't batch-fetch --
-            # we don't know thread_updated here, so don't force a refresh.
+            # Fallback for direct/standalone calls that didn't batch-fetch.
             last_update = int(getLastUpdate(db_type, f95rec["f95_id"]))
-            is_stale_thread_updated = False
         is_new = last_update == 0
-        is_updated = ts > last_update or is_stale_thread_updated
+        # Comparison is purely against thread_updated now -- last_thread_comment
+        # (raw forum reply activity) is no longer used for change detection at
+        # all; it produced too many false positives, since a thread can get new
+        # replies without the game itself actually updating. A row with no
+        # thread_updated yet (0) naturally compares as "older" than any real
+        # `ts`, so it gets picked up and backfilled the next time it's seen --
+        # no special-casing needed for that.
+        is_updated = ts > last_update
+
+        if _debug_enabled():
+            print(f"  compare f95_id={f95rec['f95_id']} {atlas['title']!r}: "
+                  f"api_ts={_fmt_ts(ts)}  db_thread_updated={_fmt_ts(last_update)}  "
+                  f"is_new={is_new} is_updated={is_updated}")
 
         if ts_only:
             # Pure API sweep -- never opens a detail page (only the

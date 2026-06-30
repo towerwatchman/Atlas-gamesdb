@@ -33,8 +33,9 @@ class packager:
                 folder,
                 str(int(time.time())),
                 "base",
-                packager.createBaseUpdate(type, start_time),
-                True,
+                packager.createBaseUpdate(type, start_time, is_full=True),
+                compress=True,
+                is_full=True,
             )
             print("Creating daily backup")
             packager.createBackup(type, folder, start_time)
@@ -47,44 +48,63 @@ class packager:
                 folder,
                 str(int(time.time())),
                 "daily",
-                packager.createBaseUpdate(type, start_time),
-                True,
+                packager.createBaseUpdate(type, start_time, is_full=False),
+                compress=True,
+                is_full=False,
             )
 
-    def createFile(dbtype, folder, filename, backuptype, data, compress=False):
-        file = os.path.join(
+    def createFullPackage(type, start_time):
+        """Always produces a full (is_full=True) package regardless of what
+        .update files already exist on disk. Used by backup.py, which
+        truncates the updates table before calling this -- without its own
+        dedicated path it would fall into createPackage's daily-snapshot
+        branch just because old .update files are still sitting on disk."""
+        type = database.REMOTE
+        folder = config.package_dir()
+        os.makedirs(os.path.join(folder, "backup"), exist_ok=True)
+        print("Creating full package")
+        packager.createFile(
+            type,
             folder,
-            filename,
+            str(int(time.time())),
+            "base",
+            packager.createBaseUpdate(type, start_time, is_full=True),
+            compress=True,
+            is_full=True,
         )
+        print("Creating daily backup")
+        packager.createBackup(type, folder, start_time)
+
+    def createFile(dbtype, folder, filename, backuptype, data, compress=False, is_full=False):
+        file = os.path.join(folder, filename)
         if compress:
-            with open(
-                file + ".update",
-                "wb",
-            ) as outfile:
+            with open(file + ".update", "wb") as outfile:
                 outfile.write(
                     lz4.frame.compress(json.dumps(data, default=str).encode("utf-8"))
-                    #zlib.compress(json.dumps(data, default=str).encode("utf-8"), 9)
                 )
-            # Store each update in the database so we can retrieve a list later
+            # Store each update in the database so we can retrieve a list later.
+            # is_full=1 -> client should treat this as a complete dataset;
+            # is_full=0 -> snapshot/delta of records updated since start_time.
             item = {
                 "date": int(filename),
                 "name": filename + ".update",
                 "md5": hashlib.md5(open(file + ".update", "rb").read()).hexdigest(),
+                "is_full": 1 if is_full else 0,
             }
             UpdatetableDynamic("updates", item, dbtype)
         else:
-            with open(
-                file + ".json",
-                "w",
-            ) as outfile:
+            with open(file + ".json", "w") as outfile:
                 outfile.write(json.dumps(data, default=str))
 
-    def createBaseUpdate(type, start_time):
+    def createBaseUpdate(type, start_time, is_full=False):
         atlas_object = {"atlas": downloadBase(type, "atlas", start_time)}
         f95_object = {"f95_zone": downloadBase(type, "f95_zone", start_time)}
         lc_object = {"lewdcorner": downloadBase(type, "lewdcorner", start_time)}
         min_ver = {"min_ver": "0.0.0"}
-        data = {**atlas_object, **f95_object, **lc_object, **min_ver}
+        # Include the full flag in the package payload itself so the client
+        # knows how to interpret the data without a separate API call.
+        full_flag = {"full": is_full}
+        data = {**full_flag, **atlas_object, **f95_object, **lc_object, **min_ver}
         return data
 
     def createBackup(type, folder, start_time):

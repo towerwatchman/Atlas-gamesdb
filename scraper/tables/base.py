@@ -78,7 +78,8 @@ class query:
                 CREATE TABLE IF NOT EXISTS updates (
                     date BIGINT PRIMARY KEY NOT NULL,
                     name TINYTEXT NOT NULL,
-                    md5 LONGTEXT
+                    md5 LONGTEXT,
+                    is_full TINYINT(1) NOT NULL DEFAULT 0
                 );
             """
         return query

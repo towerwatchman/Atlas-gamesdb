@@ -69,6 +69,7 @@ from scraper.utils.epoch import epoch
 from scraper.utils.db import (
     UpdatetableDynamic, getAtlasIdByLcId, findIdByTitle,
     insertAtlas, updateAtlasById, atlasOwnedByOtherSource,
+    getLcThreadUpdatesBulk, getLcThreadUpdated,
 )
 
 BASE = "https://lewdcorner.com"
@@ -255,10 +256,18 @@ class lewdcorner:
     def run(self, db_type, full=False, per_page=30, max_pages=None):
         """Walk the latest-updates feed and add new games.
 
+        Change detection for already-known threads compares the feed's
+        `timestamp` against the stored thread_updated column -- an
+        already-seen lc_id is only re-written if it's actually newer.
+        (Previously every re-seen lc_id was unconditionally treated as
+        "updated" with no freshness check at all, which both wasted writes
+        and meant the early-stop below almost never actually triggered.)
+
         Incremental (full=False): the feed is newest-activity-first, so once a
-        whole page yields nothing new/updated we stop early (same strategy as
-        the F95 agent). Full (full=True): walk every page until hasMore=false
-        (or max_pages)."""
+        whole page yields nothing new/updated/linked we stop early (same
+        strategy as the F95 agent). Full (full=True): re-writes every
+        already-known thread regardless of freshness, and walks every page
+        until hasMore=false (or max_pages)."""
         self.session.ensure_authenticated()
 
         page = 1
@@ -275,9 +284,16 @@ class lewdcorner:
                 break
 
             page_changed = 0
+            # One round trip for the whole page's freshness check, same
+            # pattern as the F95 agent -- avoids a query per item for the
+            # (usually large) majority of items that are already known and
+            # unchanged.
+            lc_ids = [it.get("id") for it in items]
+            last_updates = getLcThreadUpdatesBulk(lc_ids, db_type)
+
             for item in items:
                 try:
-                    result = self._process_item(item, db_type, full)
+                    result = self._process_item(item, db_type, full, last_updates)
                 except Exception as ex:   # one bad row shouldn't kill the run
                     print("item error:", ex)
                     continue
@@ -302,7 +318,7 @@ class lewdcorner:
         print(f"LewdCorner done: {added} added, {updated} updated, "
               f"{linked} linked to existing, {skipped} skipped.")
 
-    def _process_item(self, item, db_type, full):
+    def _process_item(self, item, db_type, full, last_updates=None):
         atlas, lc = _extract(item)
         if atlas is None:
             return "skipped"
@@ -311,11 +327,24 @@ class lewdcorner:
         now = int(time.time())
         lc["last_record_update"] = now
 
-        # 1. Already scraped this exact LewdCorner thread -> update in place.
+        # 1. Already scraped this exact LewdCorner thread -> update in place,
+        #    but ONLY if it's actually new/changed. Comparison is against
+        #    thread_updated (the feed's `timestamp` field, i.e. real
+        #    last-activity), not blind re-writes -- previously every re-seen
+        #    lc_id was unconditionally treated as "updated" regardless of
+        #    whether anything changed, which both wasted writes and meant
+        #    the early-stop check in run() almost never actually triggered.
         #    Refresh the atlas fields ONLY if no other source owns this game
         #    (so we never clobber an F95/dlsite/sxs-owned atlas row).
         existing_atlas_id = getAtlasIdByLcId(lc_id, db_type)
         if existing_atlas_id:
+            item_ts = int(lc.get("thread_updated") or 0)
+            if last_updates is not None:
+                stored_ts = int(last_updates.get(str(lc_id), 0))
+            else:
+                stored_ts = getLcThreadUpdated(lc_id, db_type)
+            if not full and item_ts <= stored_ts:
+                return "skipped"
             if not atlasOwnedByOtherSource(existing_atlas_id, db_type):
                 atlas["last_record_update"] = now
                 updateAtlasById(existing_atlas_id, self._clean(atlas), db_type)
