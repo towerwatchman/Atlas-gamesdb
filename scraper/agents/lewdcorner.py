@@ -93,6 +93,32 @@ def _jitter():
     time.sleep(random.uniform(lo, hi))
 
 
+# LewdCorner's feed sometimes bakes a literal " - Version:" (and whatever
+# followed it) into the `title` field itself, e.g. "Lust for Life - Version:"
+# instead of just "Lust for Life" -- the real version string is already a
+# separate `version` field, so this is pure noise that needs stripping.
+_VERSION_SUFFIX_RE = re.compile(r"\s*-\s*Version\s*:.*$", re.IGNORECASE)
+
+
+def _strip_version_suffix(title):
+    return _VERSION_SUFFIX_RE.sub("", title or "").strip()
+
+
+def _normalize_ws(s):
+    """Collapse any run of whitespace (tabs/newlines/double-spaces/etc.) to
+    a single space and strip the ends. Applied to every string value before
+    it's written to the DB."""
+    if not isinstance(s, str):
+        return s
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _clean_tag(tag):
+    """Tags come through with hyphens (e.g. "big-tits") -- strip those out
+    entirely before they're ever stored."""
+    return _normalize_ws(str(tag).replace("-", ""))
+
+
 def _normalise_id_name(title, creator):
     """Reproduce F95's id_name so the same game matches across sites.
 
@@ -128,6 +154,7 @@ def _extract(item):
     Returns (None, None) for rows we can't key (no id/title)."""
     lc_id = item.get("id")
     title = (item.get("title") or "").strip()
+    title = _strip_version_suffix(title)
     if not lc_id or not title:
         return None, None
 
@@ -136,7 +163,11 @@ def _extract(item):
     url = item.get("link") or ""
 
     tags = item.get("tags") or []
-    tags_csv = ",".join(str(t) for t in tags) if isinstance(tags, list) else str(tags)
+    if isinstance(tags, list):
+        clean_tags = [_clean_tag(t) for t in tags]
+    else:
+        clean_tags = [_clean_tag(tags)]
+    tags_csv = ",".join(t for t in clean_tags if t)
 
     images = item.get("images") or []
     # images[0] duplicates `image` (the cover); the rest are screenshots.
@@ -318,7 +349,13 @@ class lewdcorner:
 
     @staticmethod
     def _clean(d):
-        return {k: v for k, v in d.items() if v not in ("", None)}
+        out = {}
+        for k, v in d.items():
+            if isinstance(v, str):
+                v = _normalize_ws(v)
+            if v not in ("", None):
+                out[k] = v
+        return out
 
 
 # ---- offline self-test (no network): mapping + dedup against a fixture ----

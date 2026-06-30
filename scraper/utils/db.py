@@ -61,7 +61,19 @@ def _connect(db_type=None):
 def _run(sql, params=(), commit=False, fetch=None, dict_cursor=False):
     """Execute one statement on the shared connection. Reconnects and
     retries exactly once if the connection had genuinely dropped (e.g. an
-    idle timeout during a long-running scrape) -- not on every call."""
+    idle timeout during a long-running scrape) -- not on every call.
+
+    fetch="one" always fully drains the cursor (via fetchall(), taking just
+    the first row) rather than calling fetchone() and stopping there. A
+    bare fetchone() on a query that returns more than one row leaves the
+    rest sitting unread on the connection, and Connector/Python refuses to
+    run the NEXT query on that connection until those are drained -- it
+    raises "Unread result found" on whatever runs next, which can look like
+    an unrelated, random failure several calls later. Every "one row"
+    call site should also have its own LIMIT 1 for clarity/efficiency, but
+    this makes the unread-results class of bug impossible even if one is
+    missing.
+    """
     global _conn
     for attempt in (1, 2):
         con, _ = _connect()
@@ -71,7 +83,8 @@ def _run(sql, params=(), commit=False, fetch=None, dict_cursor=False):
             if commit:
                 con.commit()
             if fetch == "one":
-                result = cur.fetchone()
+                all_rows = cur.fetchall()
+                result = all_rows[0] if all_rows else None
             elif fetch == "all":
                 result = cur.fetchall()
             elif commit:
@@ -175,7 +188,7 @@ def DeleteTables(db_type=None):
 
 def getLastUpdate(db_type, f95_id):
     row = _run(
-        "SELECT last_thread_comment FROM f95_zone WHERE f95_id = %s",
+        "SELECT last_thread_comment FROM f95_zone WHERE f95_id = %s LIMIT 1",
         (f95_id,), fetch="one",
     )
     return row[0] if row and row[0] is not None else 0
@@ -183,21 +196,28 @@ def getLastUpdate(db_type, f95_id):
 
 def getLastUpdatesBulk(f95_ids, db_type=None):
     """Batch version of getLastUpdate: one round trip for a whole page of
-    items instead of one round trip per item. Returns {f95_id: last_thread_
-    comment}; ids with no row (or a NULL value) are simply absent, so the
-    caller should default missing keys to 0, same as getLastUpdate does."""
+    items instead of one round trip per item. Returns
+    {f95_id: (last_thread_comment, thread_updated)}. Ids with no row are
+    simply absent, so the caller should default missing keys to (0, None).
+
+    thread_updated is included specifically so a row whose stored
+    last_thread_comment already happens to be >= the feed's current `ts`
+    (true for plenty of legacy rows written before the feed-based ts logic
+    existed) isn't treated as permanently "up to date" while its
+    thread_updated sits NULL forever -- the caller should force a refresh
+    when thread_updated is missing, regardless of the ts comparison."""
     ids = [str(i) for i in f95_ids if i is not None]
     if not ids:
         return {}
     placeholders = ", ".join(["%s"] * len(ids))
     rows = _run(
-        f"SELECT f95_id, last_thread_comment FROM f95_zone "
+        f"SELECT f95_id, last_thread_comment, thread_updated FROM f95_zone "
         f"WHERE f95_id IN ({placeholders})",
         ids, fetch="all",
     ) or []
     return {
-        str(f95_id): (last_thread_comment or 0)
-        for f95_id, last_thread_comment in rows
+        str(f95_id): (last_thread_comment or 0, thread_updated or 0)
+        for f95_id, last_thread_comment, thread_updated in rows
     }
 
 
@@ -208,7 +228,7 @@ def getAtlasIdByF95Id(f95_id, db_type=None):
     f95_id is stable, unlike the title-derived id_name.
     """
     row = _run(
-        "SELECT atlas_id FROM f95_zone WHERE f95_id = %s",
+        "SELECT atlas_id FROM f95_zone WHERE f95_id = %s LIMIT 1",
         (f95_id,), fetch="one",
     )
     return row[0] if row else 0
@@ -239,7 +259,7 @@ def getAtlasIdByLcId(lc_id, db_type=None):
     canonical way to find a row we've scraped before and update it in place
     rather than inserting a duplicate."""
     row = _run(
-        "SELECT atlas_id FROM lewdcorner WHERE lc_id = %s",
+        "SELECT atlas_id FROM lewdcorner WHERE lc_id = %s LIMIT 1",
         (lc_id,), fetch="one",
     )
     return row[0] if row else 0
@@ -248,7 +268,7 @@ def getAtlasIdByLcId(lc_id, db_type=None):
 def findIdByTitle(table, id_name, db_type=None):
     _check_table(table)
     row = _run(
-        f"SELECT atlas_id FROM {table} WHERE id_name = %s",
+        f"SELECT atlas_id FROM {table} WHERE id_name = %s LIMIT 1",
         (id_name,), fetch="one",
     )
     return row[0] if row else 0
@@ -257,7 +277,7 @@ def findIdByTitle(table, id_name, db_type=None):
 def findDlsiteMaker(table, circle_id, db_type=None):
     _check_table(table)
     row = _run(
-        f"SELECT name FROM {table} WHERE circle_id = %s",
+        f"SELECT name FROM {table} WHERE circle_id = %s LIMIT 1",
         (circle_id,), fetch="one",
     )
     return row[0] if row else 0
