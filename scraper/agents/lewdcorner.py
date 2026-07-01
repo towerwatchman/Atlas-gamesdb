@@ -117,7 +117,7 @@ def _normalize_ws(s):
 def _clean_tag(tag):
     """Tags come through with hyphens (e.g. "big-tits") -- strip those out
     entirely before they're ever stored."""
-    return _normalize_ws(str(tag).replace("-", ""))
+    return _normalize_ws(str(tag).replace("-", " "))
 
 
 def _normalise_id_name(title, creator):
