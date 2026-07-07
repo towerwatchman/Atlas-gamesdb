@@ -70,6 +70,8 @@ from scraper.utils.db import (
     UpdatetableDynamic, getAtlasIdByLcId, findIdByTitle,
     insertAtlas, updateAtlasById, atlasOwnedByOtherSource,
     getLcThreadUpdatesBulk, getLcThreadUpdated,
+    findAtlasIdsByIdName, findFuzzyAtlasCandidates,
+    enqueueLcReview, isLcInReviewQueue,
 )
 
 BASE = "https://lewdcorner.com"
@@ -117,7 +119,7 @@ def _normalize_ws(s):
 def _clean_tag(tag):
     """Tags come through with hyphens (e.g. "big-tits") -- strip those out
     entirely before they're ever stored."""
-    return _normalize_ws(str(tag).replace("-", " "))
+    return _normalize_ws(str(tag).replace("-", ""))
 
 
 def _normalise_id_name(title, creator):
@@ -271,7 +273,7 @@ class lewdcorner:
         self.session.ensure_authenticated()
 
         page = 1
-        added = updated = linked = skipped = 0
+        added = updated = linked = skipped = queued = 0
         while True:
             if max_pages and page > max_pages:
                 break
@@ -303,6 +305,8 @@ class lewdcorner:
                     updated += 1; page_changed += 1
                 elif result == "linked":
                     linked += 1; page_changed += 1
+                elif result == "queued":
+                    queued += 1; page_changed += 1
                 elif result == "skipped":
                     skipped += 1
 
@@ -316,7 +320,8 @@ class lewdcorner:
             _jitter()
 
         print(f"LewdCorner done: {added} added, {updated} updated, "
-              f"{linked} linked to existing, {skipped} skipped.")
+              f"{linked} linked to existing, {queued} queued for review, "
+              f"{skipped} skipped.")
 
     def _process_item(self, item, db_type, full, last_updates=None):
         atlas, lc = _extract(item)
@@ -352,21 +357,49 @@ class lewdcorner:
             UpdatetableDynamic("lewdcorner", self._clean(lc), db_type)
             return "updated"
 
-        # 2. Game already in atlas from another source (e.g. F95) -> LINK.
-        #    We do NOT insert a duplicate atlas row and we do NOT overwrite the
-        #    existing (F95-owned) atlas fields; we just record a lewdcorner row
-        #    pointing at that atlas_id so every feed entry is captured.
-        #    NOTE: lewdcorner.atlas_id is UNIQUE, so if two different LC threads
-        #    map to the same atlas game (same title+dev), the upsert keeps the
-        #    most recently written one (last-write-wins) -- same single-row-per-
-        #    game model as f95_zone.
-        linked_atlas_id = findIdByTitle("atlas", atlas["id_name"], db_type)
-        if linked_atlas_id:
+        # If this LC thread is already parked in the review queue awaiting a
+        # human decision, leave it there -- don't insert a new atlas row or a
+        # lewdcorner row behind the reviewer's back. Refresh the queued snapshot
+        # so the reviewer sees current data, then move on.
+        if isLcInReviewQueue(lc_id, db_type):
+            self._enqueue(item, atlas, lc, kind=None, candidates=None,
+                          db_type=db_type, refresh_only=True)
+            return "queued"
+
+        # 2. Not seen before as an lc_id, and not queued. Decide how it maps to
+        #    atlas by COUNTING exact id_name matches -- the old code used a
+        #    LIMIT 1 lookup that silently linked to whichever row came back
+        #    first when more than one matched. Now:
+        #      exactly 1 exact match -> LINK (safe, unambiguous)
+        #      >1 exact match        -> AMBIGUOUS -> review queue ("multi")
+        #      0 exact matches       -> try fuzzy; if fuzzy candidates exist,
+        #                               review queue ("fuzzy"); else brand new.
+        exact_ids = findAtlasIdsByIdName(atlas["id_name"], db_type)
+
+        if len(exact_ids) == 1:
+            linked_atlas_id = exact_ids[0]
             lc["atlas_id"] = linked_atlas_id
             UpdatetableDynamic("lewdcorner", self._clean(lc), db_type)
-            print("  linked lc_id", lc_id, "-> existing atlas_id", linked_atlas_id,
-                  atlas["title"])
+            print("  linked lc_id", lc_id, "-> existing atlas_id",
+                  linked_atlas_id, atlas["title"])
             return "linked"
+
+        if len(exact_ids) > 1:
+            self._enqueue(item, atlas, lc, kind="multi",
+                          candidates=exact_ids, db_type=db_type)
+            print("  QUEUED (multi-match) lc_id", lc_id,
+                  "-> candidates", exact_ids, atlas["title"])
+            return "queued"
+
+        # 0 exact matches -> look for fuzzy near-misses before creating new.
+        fuzzy_ids = findFuzzyAtlasCandidates(
+            atlas["short_name"], atlas["creator"], db_type)
+        if fuzzy_ids:
+            self._enqueue(item, atlas, lc, kind="fuzzy",
+                          candidates=fuzzy_ids, db_type=db_type)
+            print("  QUEUED (fuzzy) lc_id", lc_id,
+                  "-> candidates", fuzzy_ids, atlas["title"])
+            return "queued"
 
         # 3. Genuinely new -> insert a new atlas row + a new lewdcorner row.
         atlas["last_record_update"] = now
@@ -375,6 +408,36 @@ class lewdcorner:
         UpdatetableDynamic("lewdcorner", self._clean(lc), db_type)
         print("  added lc_id", lc_id, "-> atlas_id", new_atlas_id, atlas["title"])
         return "added"
+
+    def _enqueue(self, item, atlas, lc, kind, candidates,
+                 db_type=None, refresh_only=False):
+        """Park an ambiguous LC item in lc_review_queue for manual resolution.
+
+        Stores enough to (a) show the reviewer the game, and (b) actually
+        perform the link once resolved: the cleaned lc + atlas records are
+        serialised so the reconciler can write the real lewdcorner row later
+        without re-scraping. candidate atlas_ids are stored as CSV.
+        """
+        now = int(time.time())
+        lc_id = lc["lc_id"]
+        row = {
+            "lc_id": lc_id,
+            "title": atlas.get("title") or "",
+            "creator": atlas.get("creator") or "",
+            "version": atlas.get("version") or "",
+            "id_name": atlas.get("id_name") or "",
+            "short_name": atlas.get("short_name") or "",
+            "site_url": lc.get("site_url") or "",
+            "banner_url": lc.get("banner_url") or "",
+            "lc_payload": json.dumps(self._clean(lc)),
+            "atlas_payload": json.dumps(self._clean(atlas)),
+            "last_seen": now,
+            "first_seen": now,
+        }
+        if not refresh_only:
+            row["match_kind"] = kind
+            row["candidate_ids"] = ",".join(str(c) for c in (candidates or []))
+        enqueueLcReview(row, db_type)
 
     @staticmethod
     def _clean(d):

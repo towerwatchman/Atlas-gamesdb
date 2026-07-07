@@ -139,6 +139,34 @@ class query:
         """
         return query
 
+    def createLcReviewQueueTable(type=None):
+        # Holds LewdCorner feed items that could NOT be unambiguously linked
+        # to an atlas game: either the computed id_name matched more than one
+        # atlas row (exact multi-match), or it matched none but fuzzy
+        # candidates exist (near-miss). These rows are NOT written into the
+        # `lewdcorner` table (whose atlas_id is NOT NULL UNIQUE) until a human
+        # resolves them via the reconciler CLI. keyed by lc_id so re-scrapes
+        # upsert the same pending row rather than piling up duplicates.
+        query = """
+            CREATE TABLE IF NOT EXISTS lc_review_queue (
+                lc_id INT NOT NULL UNIQUE PRIMARY KEY,
+                title TINYTEXT NOT NULL,
+                creator TINYTEXT,
+                version TINYTEXT,
+                id_name VARCHAR(255) NOT NULL,
+                short_name TINYTEXT,
+                site_url LONGTEXT,
+                banner_url LONGTEXT,
+                match_kind TINYTEXT,
+                candidate_ids LONGTEXT,
+                lc_payload LONGTEXT,
+                atlas_payload LONGTEXT,
+                first_seen BIGINT,
+                last_seen BIGINT
+            );
+        """
+        return query
+
     def createSxsTable(type):
         query = """
             CREATE TABLE IF NOT EXISTS sxs (

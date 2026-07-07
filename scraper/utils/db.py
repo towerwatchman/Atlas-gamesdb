@@ -27,7 +27,7 @@ from scraper.config import config
 # via scraped data flowing into table/column positions).
 ALLOWED_TABLES = {
     "atlas", "f95_zone", "updates", "dlsite", "dlsite_circle",
-    "lewdcorner", "sxs", "test",
+    "lewdcorner", "sxs", "test", "lc_review_queue",
 }
 
 _conn = None  # the one shared connection for this process; see _connect().
@@ -174,9 +174,29 @@ def CreateDatabase(db_type=None):
         query.createDlsiteCircleTable(db_type),
         query.createDlsiteTable(db_type),
         query.createLewdcornereTable(db_type),
+        query.createLcReviewQueueTable(db_type),
         query.createSxsTable(db_type),
     ):
         _run(stmt, commit=True)
+    _ensure_indexes()
+
+
+def _ensure_indexes():
+    """Create helpful indexes if missing. The match path (both the reconciler
+    and every normal scrape) filters atlas by id_name; without an index that's
+    a full table scan per lookup, which is what made the reconciler appear to
+    hang on a large atlas table. Guarded so re-running is a no-op and an
+    already-existing index (or a MySQL build that lacks IF NOT EXISTS on
+    CREATE INDEX) doesn't raise."""
+    idx = [
+        ("idx_atlas_id_name", "CREATE INDEX idx_atlas_id_name ON atlas (id_name)"),
+    ]
+    for name, ddl in idx:
+        try:
+            _run(ddl, commit=True)
+        except Exception:
+            # Index already exists (error 1061) or similar -- safe to ignore.
+            pass
 
 
 def DeleteTables(db_type=None):
@@ -294,6 +314,188 @@ def findIdByTitle(table, id_name, db_type=None):
         (id_name,), fetch="one",
     )
     return row[0] if row else 0
+
+
+# ---------------------------------------------------------------- matching
+
+def findAtlasIdsByIdName(id_name, db_type=None):
+    """Return ALL atlas_ids whose id_name matches exactly (no LIMIT 1).
+
+    This is the honest version of findIdByTitle: the old single-row lookup
+    silently linked to whichever row MySQL returned first when an LC game's
+    computed id_name collided with more than one atlas row. Callers use the
+    length of this list to decide: 0 -> new, 1 -> link, >1 -> ambiguous
+    (route to the review queue).
+    """
+    rows = _run(
+        "SELECT atlas_id FROM atlas WHERE id_name = %s ORDER BY atlas_id",
+        (id_name,), fetch="all",
+    ) or []
+    return [r[0] for r in rows]
+
+
+def findFuzzyAtlasCandidates(short_name, creator, db_type=None, limit=25):
+    """Best-effort fuzzy candidate lookup for an LC game that had NO exact
+    id_name match. Site formatting differs (spacing, punctuation, creator
+    aliases), so an exact id_name miss doesn't mean the game is absent from
+    atlas -- it may just be spelled differently.
+
+    Strategy (cheap, index-friendly-ish, no extensions required):
+      * match on short_name prefix (title with all non-alnum stripped), OR
+      * match on creator prefix,
+    then let the human judge. Returns a list of atlas_id ints. Ordering puts
+    rows that share BOTH signals first.
+    """
+    sn = (short_name or "").strip()
+    cr = (creator or "").strip().upper()
+    if not sn and not cr:
+        return []
+    # A short prefix keeps this from matching half the table on very short
+    # names; 4 chars (or the whole thing if shorter) is a reasonable floor.
+    sn_pref = sn[:max(4, min(len(sn), 8))]
+    rows = _run(
+        """
+        SELECT atlas_id,
+               (short_name LIKE %s) AS sn_hit,
+               (UPPER(creator) LIKE %s) AS cr_hit
+        FROM atlas
+        WHERE short_name LIKE %s OR UPPER(creator) LIKE %s
+        ORDER BY (short_name LIKE %s) + (UPPER(creator) LIKE %s) DESC, atlas_id
+        LIMIT %s
+        """,
+        (f"{sn_pref}%", f"{cr}%",
+         f"{sn_pref}%", f"{cr}%",
+         f"{sn_pref}%", f"{cr}%", int(limit)),
+        fetch="all",
+    ) or []
+    return [r[0] for r in rows]
+
+
+def getAtlasRowsByIds(atlas_ids, db_type=None):
+    """Fetch full atlas rows for a list of atlas_ids, as dicts, so the
+    reconciler can show the human the candidates side by side."""
+    ids = [int(i) for i in atlas_ids if i is not None]
+    if not ids:
+        return []
+    placeholders = ", ".join(["%s"] * len(ids))
+    return _run(
+        f"SELECT * FROM atlas WHERE atlas_id IN ({placeholders})",
+        ids, fetch="all", dict_cursor=True,
+    ) or []
+
+
+def getAtlasSourceOwners(atlas_id, db_type=None):
+    """Return the list of source tables that reference this atlas_id
+    (e.g. ['f95_zone'] or ['f95_zone', 'lewdcorner']). Used both to show the
+    human where a candidate came from and to guard deletion -- an atlas row
+    still owned by another source must never be deleted."""
+    owners = []
+    for tbl in ("f95_zone", "dlsite", "sxs", "lewdcorner"):
+        try:
+            row = _run(
+                f"SELECT 1 FROM {tbl} WHERE atlas_id = %s LIMIT 1",
+                (atlas_id,), fetch="one",
+            )
+            if row:
+                owners.append(tbl)
+        except Exception:
+            pass
+    return owners
+
+
+def getAtlasSourceIds(atlas_id, db_type=None):
+    """Return the actual source-thread ids referencing this atlas_id, as a
+    dict e.g. {'f95_id': 12345, 'lc_id': 23056}. Only sources that actually
+    reference the row are included. Used to show the reviewer exactly which
+    F95 and LewdCorner threads are attached to each candidate atlas row."""
+    id_cols = {
+        "f95_zone": "f95_id",
+        "dlsite": "dlsite_id",
+        "sxs": "sxs_id",
+        "lewdcorner": "lc_id",
+    }
+    out = {}
+    for tbl, id_col in id_cols.items():
+        try:
+            rows = _run(
+                f"SELECT {id_col} FROM {tbl} WHERE atlas_id = %s",
+                (atlas_id,), fetch="all",
+            ) or []
+            if rows:
+                vals = [r[0] for r in rows]
+                # atlas_id is UNIQUE in each source table, so normally one id;
+                # keep a list just in case and collapse to a scalar when single.
+                out[id_col] = vals[0] if len(vals) == 1 else vals
+        except Exception:
+            pass
+    return out
+
+
+def deleteAtlasById(atlas_id, db_type=None):
+    """Delete an orphaned atlas row by id. The caller is responsible for
+    confirming it's safe (no remaining source references)."""
+    _run("DELETE FROM atlas WHERE atlas_id = %s", (atlas_id,), commit=True)
+
+
+def relinkLewdcornerAtlasId(lc_id, new_atlas_id, db_type=None):
+    """Point an existing lewdcorner row at the correct atlas_id. Used by the
+    reconciler when fixing an already-mis-linked LC row."""
+    _run(
+        "UPDATE lewdcorner SET atlas_id = %s WHERE lc_id = %s",
+        (int(new_atlas_id), int(lc_id)), commit=True,
+    )
+
+
+# ---------------------------------------------------- review queue (LC)
+
+def enqueueLcReview(row, db_type=None):
+    """Upsert one ambiguous LC item into lc_review_queue (keyed by lc_id, so
+    a re-scrape refreshes the same pending row instead of duplicating it).
+    `row` is a dict of column->value; first_seen is preserved on update."""
+    if not row:
+        return
+    cols = list(row.keys())
+    col_sql = ", ".join(cols)
+    placeholders = ", ".join(["%s"] * len(cols))
+    params = list(row.values())
+    # Never let first_seen get overwritten by a later sighting.
+    updates = ", ".join(
+        f"{c}=VALUES({c})" for c in cols if c != "first_seen"
+    )
+    sql = (
+        f"INSERT INTO lc_review_queue ({col_sql}) VALUES ({placeholders}) "
+        f"ON DUPLICATE KEY UPDATE {updates}"
+    )
+    _run(sql, params, commit=True)
+
+
+def getLcReviewQueue(match_kind=None, db_type=None):
+    """Return pending review rows as dicts, oldest first. Optional filter by
+    match_kind ('multi' or 'fuzzy')."""
+    if match_kind:
+        return _run(
+            "SELECT * FROM lc_review_queue WHERE match_kind = %s "
+            "ORDER BY first_seen, lc_id",
+            (match_kind,), fetch="all", dict_cursor=True,
+        ) or []
+    return _run(
+        "SELECT * FROM lc_review_queue ORDER BY first_seen, lc_id",
+        fetch="all", dict_cursor=True,
+    ) or []
+
+
+def isLcInReviewQueue(lc_id, db_type=None):
+    row = _run(
+        "SELECT 1 FROM lc_review_queue WHERE lc_id = %s LIMIT 1",
+        (lc_id,), fetch="one",
+    )
+    return bool(row)
+
+
+def dequeueLcReview(lc_id, db_type=None):
+    """Remove a review row once it's been resolved (or dismissed)."""
+    _run("DELETE FROM lc_review_queue WHERE lc_id = %s",
+         (int(lc_id),), commit=True)
 
 
 def findDlsiteMaker(table, circle_id, db_type=None):
