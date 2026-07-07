@@ -35,7 +35,9 @@ Design notes
   at the surviving atlas_id).
 """
 import argparse
+import difflib
 import json
+import re
 import sys
 
 from scraper.config import config
@@ -43,7 +45,9 @@ from scraper.utils.db import (
     _run,
     findAtlasIdsByIdName, findFuzzyAtlasCandidates,
     getAtlasRowsByIds, getAtlasSourceOwners, getAtlasSourceIds,
+    getLcOnlyAtlasRows, getF95BackedAtlasRows,
     deleteAtlasById, relinkLewdcornerAtlasId,
+    getLcIdByAtlasId, deleteLewdcornerByLcId,
     getLcReviewQueue, dequeueLcReview,
     insertAtlas, UpdatetableDynamic,
 )
@@ -215,6 +219,215 @@ def _existing_multimatch_lc_rows():
     return out
 
 
+# ---------------------------------------------------- fuzzy cleanup job
+
+def _norm(s):
+    """Lowercase, strip all non-alphanumerics -> comparable key."""
+    return re.sub(r"[\W_]+", "", (s or "").lower())
+
+
+def _sim(a, b):
+    """0..1 similarity between two strings (order-insensitive ratio)."""
+    a, b = _norm(a), _norm(b)
+    if not a or not b:
+        return 0.0
+    return difflib.SequenceMatcher(None, a, b).ratio()
+
+
+def _score(lc_row, f95_row):
+    """Combined title+creator similarity between an LC-only row and an F95
+    candidate. Title weighted more heavily than creator (creators are often
+    aliased/blank on one site). Returns 0..1."""
+    t = _sim(lc_row.get("title"), f95_row.get("title"))
+    c = _sim(lc_row.get("creator") or lc_row.get("developer"),
+             f95_row.get("creator") or f95_row.get("developer"))
+    # If either side has no creator, fall back to pure title similarity.
+    if not _norm(lc_row.get("creator") or lc_row.get("developer")) or \
+       not _norm(f95_row.get("creator") or f95_row.get("developer")):
+        return t
+    return 0.7 * t + 0.3 * c
+
+
+def _rank_f95_candidates(lc_row, f95_pool, top=6, floor=0.55):
+    """Return the best F95 candidates for one LC-only row as a list of
+    (score, f95_row), highest first, above the floor."""
+    scored = []
+    lc_title_key = _norm(lc_row.get("title"))
+    for fr in f95_pool:
+        # cheap prefilter: require some title overlap before scoring
+        ft = _norm(fr.get("title"))
+        if not ft or not lc_title_key:
+            continue
+        if lc_title_key[:3] != ft[:3] and lc_title_key not in ft \
+           and ft not in lc_title_key:
+            # skip obviously-unrelated titles to keep it fast on big pools
+            if _sim(lc_row.get("title"), fr.get("title")) < floor:
+                continue
+        s = _score(lc_row, fr)
+        if s >= floor:
+            scored.append((s, fr))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return scored[:top]
+
+
+def print_f95_candidate(idx, score, fr):
+    print(f"  {bold('[' + str(idx) + ']')} "
+          f"match {yellow(f'{score:.0%}')}  "
+          f"atlas_id {yellow(str(fr.get('atlas_id')))}  "
+          f"f95_id {cyan(str(fr.get('f95_id')))}")
+    print(f"        title   : {_short(fr.get('title'))}")
+    print(f"        creator : {_short(fr.get('creator'))}  "
+          f"dev: {_short(fr.get('developer'), 30)}")
+    print(f"        id_name : {dim(_short(fr.get('id_name')))}")
+
+
+def _status_tag(status):
+    """Short colored tag for the apply result, shown inline in auto lines."""
+    if status == "dup_dropped":
+        return yellow("[dup dropped]")
+    return green("[linked]")
+
+
+def run_fuzzy_cleanup(floor=0.55, auto=None):
+    """Find every LC-only atlas row (no F95/dlsite/sxs backing) and fuzzy-
+    match it against the F95-backed pool by title+creator. For each with
+    plausible candidates, let the reviewer pick the correct F95 game; on
+    selection, repoint the lewdcorner row to the F95-backed atlas_id and
+    delete the now-orphaned LC-only atlas row.
+
+    auto: if set (e.g. 0.9), any single candidate scoring >= auto with no
+    close runner-up is applied automatically without prompting.
+    """
+    print(dim("  loading LC-only atlas rows..."), flush=True)
+    lc_rows = getLcOnlyAtlasRows()
+    print(dim(f"  {len(lc_rows)} LC-only atlas row(s)"), flush=True)
+    print(dim("  loading F95-backed candidate pool..."), flush=True)
+    f95_pool = getF95BackedAtlasRows()
+    print(dim(f"  {len(f95_pool)} F95-backed atlas row(s)\n"), flush=True)
+
+    if not lc_rows:
+        print(green("No LC-only atlas rows. Nothing to do."))
+        return
+
+    fixed = auto_fixed = skipped = nomatch = dropped = 0
+    for n, lc in enumerate(lc_rows, 1):
+        cands = _rank_f95_candidates(lc, f95_pool, floor=floor)
+        if not cands:
+            nomatch += 1
+            continue
+
+        top_score, top_fr = cands[0]
+
+        # ALWAYS auto-apply an exact, unambiguous match without prompting:
+        # normalized title matches exactly and there is exactly one such
+        # perfect candidate (no other candidate also at 100%). This is the
+        # "obviously correct" case -- with ~1700 rows you don't want to
+        # confirm each certainty by hand. A tie at 100% (two identical-title
+        # F95 games) is NOT auto-applied; it falls through to manual review.
+        perfect = [c for c in cands if c[0] >= 0.999]
+        if len(perfect) == 1 and top_score >= 0.999:
+            status = _apply_fuzzy_fix(lc, top_fr)
+            print(green(f"[{n}/{len(lc_rows)}] EXACT 100% {_status_tag(status)} "
+                        f"lc_id {lc['lc_id']}: {_short(lc['title'], 40)} "
+                        f"-> atlas_id {top_fr['atlas_id']} "
+                        f"(f95 {top_fr['f95_id']})"))
+            if status == "dup_dropped":
+                dropped += 1
+            else:
+                auto_fixed += 1
+            continue
+
+        # Optional softer auto-apply: confident top match, clear of runner-up.
+        if auto is not None and top_score >= auto and (
+                len(cands) == 1 or top_score - cands[1][0] >= 0.15):
+            status = _apply_fuzzy_fix(lc, top_fr)
+            print(green(f"[{n}/{len(lc_rows)}] AUTO {top_score:.0%} "
+                        f"{_status_tag(status)} "
+                        f"lc_id {lc['lc_id']}: {_short(lc['title'], 40)} "
+                        f"-> atlas_id {top_fr['atlas_id']} "
+                        f"(f95 {top_fr['f95_id']})"))
+            if status == "dup_dropped":
+                dropped += 1
+            else:
+                auto_fixed += 1
+            continue
+
+        print("=" * 72)
+        print(bold(f"[{n}/{len(lc_rows)}]  LC-only atlas_id {lc['atlas_id']}  "
+                   f"(lc_id {lc['lc_id']})"))
+        print_lc(lc.get("title", ""), lc.get("creator", ""),
+                 lc.get("version", ""), "", "")
+        print(dim("  F95 candidates:"))
+        for i, (score, fr) in enumerate(cands, 1):
+            print_f95_candidate(i, score, fr)
+        print(dim("  [s]kip   [q]uit"))
+        choice = _prompt({"s", "q"}, len(cands))
+        if choice == "q":
+            print("Stopping.")
+            break
+        if choice == "s":
+            skipped += 1
+            print(dim("  skipped\n"))
+            continue
+        score, fr = cands[choice]
+        status = _apply_fuzzy_fix(lc, fr)
+        if status == "dup_dropped":
+            print(green(f"  lc_id {lc['lc_id']} is a DUPLICATE of a game "
+                        f"already linked to atlas_id {fr['atlas_id']} "
+                        f"(f95 {fr['f95_id']}); dropped the duplicate LC row "
+                        f"and orphaned atlas_id {lc['atlas_id']}\n"))
+            dropped += 1
+        else:
+            print(green(f"  linked lc_id {lc['lc_id']} -> atlas_id "
+                        f"{fr['atlas_id']} (f95 {fr['f95_id']}); "
+                        f"deleted LC-only atlas_id {lc['atlas_id']}\n"))
+            fixed += 1
+
+    print(green(
+        f"\nFuzzy cleanup: {auto_fixed} auto-applied (exact/confident), "
+        f"{fixed} manually fixed, {dropped} duplicate LC rows dropped, "
+        f"{skipped} skipped, "
+        f"{nomatch} with no candidate above {floor:.0%}."))
+
+
+def _apply_fuzzy_fix(lc, fr):
+    """Attach this LewdCorner thread to the correct F95-backed atlas game.
+
+    Two cases:
+      A) The target F95 atlas row has NO lewdcorner row yet -> repoint this
+         LC row onto it, then delete the orphaned LC-only atlas row.
+      B) The target F95 atlas row ALREADY has a lewdcorner row (a different
+         lc_id) -> lewdcorner.atlas_id is UNIQUE, so we can't point a second
+         LC row at it. That means THIS thread is a duplicate LewdCorner entry
+         for a game that's already correctly linked. We drop this duplicate
+         lewdcorner row and its now-orphaned LC-only atlas row, leaving the
+         existing correct link untouched.
+
+    Returns a short status string for the caller's log/summary:
+      'relinked'  -> case A
+      'dup_dropped' -> case B
+    """
+    old_atlas_id = lc["atlas_id"]
+    target_atlas_id = fr["atlas_id"]
+
+    if old_atlas_id == target_atlas_id:
+        return "noop"
+
+    occupant = getLcIdByAtlasId(target_atlas_id)
+    if occupant is not None and occupant != lc["lc_id"]:
+        # Case B: target already linked by another LC thread -> this is a dup.
+        deleteLewdcornerByLcId(lc["lc_id"])
+        if not getAtlasSourceOwners(old_atlas_id):
+            deleteAtlasById(old_atlas_id)
+        return "dup_dropped"
+
+    # Case A: safe to repoint.
+    relinkLewdcornerAtlasId(lc["lc_id"], target_atlas_id)
+    if not getAtlasSourceOwners(old_atlas_id):
+        deleteAtlasById(old_atlas_id)
+    return "relinked"
+
+
 def run_cleanup():
     flagged = _existing_multimatch_lc_rows()
     if not flagged:
@@ -352,6 +565,15 @@ def main():
     ap = argparse.ArgumentParser(description="LewdCorner <-> atlas reconciler")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("cleanup", help="fix existing mis-linked lewdcorner rows")
+    fp = sub.add_parser(
+        "fuzzy",
+        help="find LC-only atlas rows and fuzzy-match them to F95 games")
+    fp.add_argument("--floor", type=float, default=0.55,
+                    help="minimum title/creator similarity to show a "
+                         "candidate (0-1, default 0.55)")
+    fp.add_argument("--auto", type=float, default=None,
+                    help="auto-apply a confident unambiguous match at/above "
+                         "this score (e.g. 0.9); off by default")
     qp = sub.add_parser("queue", help="resolve the ongoing review queue")
     qp.add_argument("--kind", choices=["multi", "fuzzy"], default=None)
     args = ap.parse_args()
@@ -360,6 +582,8 @@ def main():
     try:
         if args.cmd == "cleanup":
             run_cleanup()
+        elif args.cmd == "fuzzy":
+            run_fuzzy_cleanup(floor=args.floor, auto=args.auto)
         elif args.cmd == "queue":
             run_queue(kind=args.kind)
     except (KeyboardInterrupt, EOFError):

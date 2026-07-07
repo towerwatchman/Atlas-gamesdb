@@ -318,6 +318,48 @@ def findIdByTitle(table, id_name, db_type=None):
 
 # ---------------------------------------------------------------- matching
 
+def getLcOnlyAtlasRows(db_type=None):
+    """Return atlas rows that are referenced by a lewdcorner row but NOT by
+    any authoritative source (f95_zone/dlsite/sxs). These are the LC-only
+    games -- the ones that were inserted as brand-new atlas rows because no
+    exact id_name match was found at scrape time, when in fact the game very
+    likely already exists in atlas under an F95-backed row with a slightly
+    different title/creator spelling.
+
+    Returns dicts with the atlas fields we need to fuzzy-match, plus the
+    owning lc_id.
+    """
+    return _run(
+        """
+        SELECT a.atlas_id, a.title, a.creator, a.developer, a.short_name,
+               a.id_name, a.version, a.engine, a.status, l.lc_id
+        FROM atlas a
+        JOIN lewdcorner l ON l.atlas_id = a.atlas_id
+        WHERE a.atlas_id NOT IN (SELECT atlas_id FROM f95_zone)
+          AND a.atlas_id NOT IN (SELECT atlas_id FROM dlsite)
+          AND a.atlas_id NOT IN (SELECT atlas_id FROM sxs)
+        ORDER BY a.atlas_id
+        """,
+        fetch="all", dict_cursor=True,
+    ) or []
+
+
+def getF95BackedAtlasRows(db_type=None):
+    """Return all atlas rows that ARE backed by F95 (the source of truth),
+    with the f95_id, for use as the fuzzy-match candidate pool. Pulled once
+    and matched in Python so we avoid a per-row LIKE query."""
+    return _run(
+        """
+        SELECT a.atlas_id, a.title, a.creator, a.developer, a.short_name,
+               a.id_name, a.version, a.engine, a.status, f.f95_id
+        FROM atlas a
+        JOIN f95_zone f ON f.atlas_id = a.atlas_id
+        ORDER BY a.atlas_id
+        """,
+        fetch="all", dict_cursor=True,
+    ) or []
+
+
 def findAtlasIdsByIdName(id_name, db_type=None):
     """Return ALL atlas_ids whose id_name matches exactly (no LIMIT 1).
 
@@ -444,6 +486,26 @@ def relinkLewdcornerAtlasId(lc_id, new_atlas_id, db_type=None):
         "UPDATE lewdcorner SET atlas_id = %s WHERE lc_id = %s",
         (int(new_atlas_id), int(lc_id)), commit=True,
     )
+
+
+def getLcIdByAtlasId(atlas_id, db_type=None):
+    """Return the lc_id of the lewdcorner row currently pointing at this
+    atlas_id, or None. lewdcorner.atlas_id is UNIQUE, so there's at most one.
+    Used to detect the case where the F95 game we want to relink to ALREADY
+    has a (correct) LewdCorner row -- meaning the row we're processing is a
+    duplicate LC thread for the same game, not a fixable mis-link."""
+    row = _run(
+        "SELECT lc_id FROM lewdcorner WHERE atlas_id = %s LIMIT 1",
+        (int(atlas_id),), fetch="one",
+    )
+    return row[0] if row else None
+
+
+def deleteLewdcornerByLcId(lc_id, db_type=None):
+    """Delete a lewdcorner row by lc_id. Used to drop a duplicate LC thread
+    whose game is already linked to the target atlas row by another LC row."""
+    _run("DELETE FROM lewdcorner WHERE lc_id = %s",
+         (int(lc_id),), commit=True)
 
 
 # ---------------------------------------------------- review queue (LC)
