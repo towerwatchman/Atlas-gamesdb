@@ -57,6 +57,7 @@ computes it (short_name + "_" + CREATOR). See _normalise_id_name().
   >>> because lewdcorner.atlas_id is UNIQUE, the second upserts over the first
   >>> (last-write-wins), matching the f95_zone single-row-per-game model.
 """
+import difflib
 import json
 import os
 import random
@@ -71,8 +72,57 @@ from scraper.utils.db import (
     insertAtlas, updateAtlasById, atlasOwnedByOtherSource,
     getLcThreadUpdatesBulk, getLcThreadUpdated,
     findAtlasIdsByIdName, findFuzzyAtlasCandidates,
-    enqueueLcReview, isLcInReviewQueue,
+    getAtlasRowsByIds, enqueueLcReview, isLcInReviewQueue,
 )
+
+# --- Fuzzy match scoring (integer 0-100) -----------------------------------
+# When an incoming LC game has no EXACT id_name match, we still want to know
+# whether a differently-spelled atlas row is really the same game before we
+# create a brand-new atlas row for it. We score each fuzzy candidate on an
+# integer 0-100 similarity scale (mirrors the weighting the admin-only
+# reconcile_lc.py uses: 70% title, 30% creator) and branch on empirically
+# verified bands:
+#     best score 71-99  -> ambiguous          -> review queue ("fuzzy")
+#     best score <= 70  -> genuinely different -> add as a new atlas row
+# An EXACT id_name match never reaches the scorer -- it's handled earlier as a
+# direct link (1 match) or a "multi" queue (>1 match). So a perfect 100 here
+# is only ever produced by, and equivalent to, that exact-match link path.
+_TITLE_WEIGHT = 0.7
+_CREATOR_WEIGHT = 0.3
+# Lower edge of the "send to review" band. <= this = add as new.
+LC_REVIEW_FLOOR = 70
+
+
+def _sim(a, b):
+    """0.0-1.0 order-insensitive similarity between two strings."""
+    a = (a or "").strip().lower()
+    b = (b or "").strip().lower()
+    if not a or not b:
+        return 0.0
+    return difflib.SequenceMatcher(None, a, b).ratio()
+
+
+def _score_candidate(lc_title, lc_creator, atlas_row):
+    """Integer 0-100 similarity of an incoming LC game to one atlas row.
+
+    Weighted 70% title / 30% creator, matching reconcile_lc._score. Returns
+    an int in [0, 100].
+    """
+    t = _sim(lc_title, atlas_row.get("title"))
+    c = _sim(lc_creator, atlas_row.get("creator") or atlas_row.get("developer"))
+    return int(round(100 * (_TITLE_WEIGHT * t + _CREATOR_WEIGHT * c)))
+
+
+def _best_candidate(lc_title, lc_creator, atlas_rows):
+    """Return (best_score:int, best_atlas_id) over atlas_rows, or (0, None)."""
+    best_score = 0
+    best_id = None
+    for row in atlas_rows or []:
+        s = _score_candidate(lc_title, lc_creator, row)
+        if s > best_score:
+            best_score = s
+            best_id = row.get("atlas_id")
+    return best_score, best_id
 
 BASE = "https://lewdcorner.com"
 API = BASE + "/latest-updates.php"
@@ -391,15 +441,30 @@ class lewdcorner:
                   "-> candidates", exact_ids, atlas["title"])
             return "queued"
 
-        # 0 exact matches -> look for fuzzy near-misses before creating new.
+        # 0 exact matches -> look for fuzzy near-misses, then SCORE them.
+        # An exact id_name miss doesn't prove the game is absent (site
+        # formatting differs), so we score each candidate 0-100 (70% title /
+        # 30% creator) and use the best:
+        #     71-99 -> ambiguous, could be the same game  -> review queue
+        #     <= 70 -> verified genuinely different game   -> add as new
+        # No candidates at all also falls through to "add as new".
         fuzzy_ids = findFuzzyAtlasCandidates(
             atlas["short_name"], atlas["creator"], db_type)
         if fuzzy_ids:
-            self._enqueue(item, atlas, lc, kind="fuzzy",
-                          candidates=fuzzy_ids, db_type=db_type)
-            print("  QUEUED (fuzzy) lc_id", lc_id,
-                  "-> candidates", fuzzy_ids, atlas["title"])
-            return "queued"
+            candidate_rows = getAtlasRowsByIds(fuzzy_ids, db_type)
+            best_score, best_id = _best_candidate(
+                atlas["title"], atlas["creator"], candidate_rows)
+            if best_score > LC_REVIEW_FLOOR:
+                self._enqueue(item, atlas, lc, kind="fuzzy",
+                              candidates=fuzzy_ids, db_type=db_type,
+                              score=best_score)
+                print("  QUEUED (fuzzy", str(best_score) + "%) lc_id", lc_id,
+                      "-> best atlas_id", best_id, "of", fuzzy_ids,
+                      atlas["title"])
+                return "queued"
+            # best_score <= LC_REVIEW_FLOOR: not a real match -> new game.
+            print("  fuzzy best only", str(best_score) + "% (<= "
+                  + str(LC_REVIEW_FLOOR) + "); adding as new:", atlas["title"])
 
         # 3. Genuinely new -> insert a new atlas row + a new lewdcorner row.
         atlas["last_record_update"] = now
@@ -410,13 +475,18 @@ class lewdcorner:
         return "added"
 
     def _enqueue(self, item, atlas, lc, kind, candidates,
-                 db_type=None, refresh_only=False):
+                 db_type=None, refresh_only=False, score=None):
         """Park an ambiguous LC item in lc_review_queue for manual resolution.
 
         Stores enough to (a) show the reviewer the game, and (b) actually
         perform the link once resolved: the cleaned lc + atlas records are
         serialised so the reconciler can write the real lewdcorner row later
         without re-scraping. candidate atlas_ids are stored as CSV.
+
+        `score` (int 0-100) is the best fuzzy similarity that routed this item
+        here; stored in match_score so the reviewer sees how close it was. It
+        is only meaningful for kind="fuzzy" -- "multi" rows are exact id_name
+        collisions, not similarity-based, so they leave match_score NULL.
         """
         now = int(time.time())
         lc_id = lc["lc_id"]
@@ -437,6 +507,8 @@ class lewdcorner:
         if not refresh_only:
             row["match_kind"] = kind
             row["candidate_ids"] = ",".join(str(c) for c in (candidates or []))
+            if score is not None:
+                row["match_score"] = int(score)
         enqueueLcReview(row, db_type)
 
     @staticmethod
