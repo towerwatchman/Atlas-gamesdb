@@ -17,3 +17,4 @@ public_html/packages/
 
 # editor
 .vscode/
+*.zip

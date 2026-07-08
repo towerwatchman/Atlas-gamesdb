@@ -24,6 +24,16 @@ Two jobs, one tool:
      also mark an item as "new" (create a fresh atlas row from the LC data) or
      skip it.
 
+  3. DEFER (batch, non-interactive):
+       python reconcile_lc.py defer --threshold 0.8
+       python reconcile_lc.py defer --threshold 0.8 --dry-run
+     Fast bulk triage. For every LC-only atlas row whose best fuzzy match to
+     an F95-backed game scores >= threshold, parks the LC game in
+     `lc_review_queue` (match_kind='fuzzy', full payload preserved), deletes
+     the lewdcorner row, and deletes the now-orphaned LC-only atlas row. Never
+     prompts and never touches rows below the threshold; resolve the parked
+     items later with `queue`.
+
 Design notes
 ------------
 * Reuses the scraper's own DB layer (scraper.utils.db) -- same connection,
@@ -47,10 +57,11 @@ from scraper.utils.db import (
     getAtlasRowsByIds, getAtlasSourceOwners, getAtlasSourceIds,
     getLcOnlyAtlasRows, getF95BackedAtlasRows,
     deleteAtlasById, relinkLewdcornerAtlasId,
-    getLcIdByAtlasId, deleteLewdcornerByLcId,
-    getLcReviewQueue, dequeueLcReview,
+    getLcIdByAtlasId, deleteLewdcornerByLcId, getLewdcornerRowByLcId,
+    getLcReviewQueue, dequeueLcReview, enqueueLcReview,
     insertAtlas, UpdatetableDynamic,
 )
+import time
 
 # ------------------------------------------------------------------ display
 
@@ -428,6 +439,132 @@ def _apply_fuzzy_fix(lc, fr):
     return "relinked"
 
 
+# ---------------------------------------------------- defer job (batch)
+
+def _clean_payload(d):
+    """Serialise-safe copy of a row dict: drop Nones, stringify anything the
+    JSON encoder can't handle (e.g. Decimal). Mirrors the scraper's own
+    _clean so the stored lc_payload matches what queue's [n]ew path expects."""
+    out = {}
+    for k, v in (d or {}).items():
+        if v is None:
+            continue
+        try:
+            json.dumps(v)
+            out[k] = v
+        except (TypeError, ValueError):
+            out[k] = str(v)
+    return out
+
+
+def run_defer(threshold=0.8, floor=0.55, dry_run=False):
+    """Batch, non-interactive triage.
+
+    For every LC-only atlas row (linked to a lewdcorner row but backed by no
+    authoritative source) whose BEST fuzzy match against the F95-backed pool
+    scores >= threshold, we assume the LC-only atlas row is a duplicate of a
+    real F95 game but we don't trust the match enough to auto-link it. So we:
+
+      1. Park the LC game in lc_review_queue (match_kind='fuzzy') with its full
+         lc_payload + atlas_payload + candidate atlas_ids, so it can be
+         relinked or recreated later via `queue`.
+      2. Delete the lewdcorner row (FK child) FIRST, then
+      3. Delete the now-orphaned LC-only atlas row (only if no source owns it).
+
+    Rows whose top match is below `threshold` are left completely untouched.
+    This pass never prompts; use `cleanup`/`fuzzy` for interactive review.
+    """
+    print(dim("  loading LC-only atlas rows..."), flush=True)
+    lc_rows = getLcOnlyAtlasRows()
+    print(dim(f"  {len(lc_rows)} LC-only atlas row(s)"), flush=True)
+    print(dim("  loading F95-backed candidate pool..."), flush=True)
+    f95_pool = getF95BackedAtlasRows()
+    print(dim(f"  {len(f95_pool)} F95-backed atlas row(s)\n"), flush=True)
+
+    if not lc_rows:
+        print(green("No LC-only atlas rows. Nothing to do."))
+        return
+
+    if dry_run:
+        print(yellow(bold("  DRY RUN -- no changes will be written\n")))
+
+    deferred = below = nocand = skipped_owned = 0
+    for n, lc in enumerate(lc_rows, 1):
+        cands = _rank_f95_candidates(lc, f95_pool, floor=floor)
+        if not cands:
+            nocand += 1
+            continue
+        top_score, top_fr = cands[0]
+        if top_score < threshold:
+            below += 1
+            continue
+
+        lc_id = lc["lc_id"]
+        old_atlas_id = lc["atlas_id"]
+        cand_ids = [c[1]["atlas_id"] for c in cands]
+
+        line = (f"[{n}/{len(lc_rows)}] {yellow(f'{top_score:.0%}')} "
+                f"lc_id {lc_id}: {_short(lc.get('title'), 40)} "
+                f"~ atlas_id {top_fr['atlas_id']} (f95 {top_fr['f95_id']}) "
+                f"{_short(top_fr.get('title'), 40)}")
+
+        if dry_run:
+            print(dim("[would defer] ") + line)
+            deferred += 1
+            continue
+
+        # Build the queue row from the FULL lewdcorner record so `queue` can
+        # recreate/relink later without re-scraping.
+        lc_full = getLewdcornerRowByLcId(lc_id) or {"lc_id": lc_id,
+                                                    "atlas_id": old_atlas_id}
+        atlas_payload = _clean_payload(lc)
+        atlas_payload.pop("atlas_id", None)
+        atlas_payload.pop("lc_id", None)
+        lc_payload = _clean_payload(lc_full)
+
+        now = int(time.time())
+        qrow = {
+            "lc_id": lc_id,
+            "title": lc.get("title") or "",
+            "creator": lc.get("creator") or "",
+            "version": lc.get("version") or "",
+            "id_name": lc.get("id_name") or "",
+            "short_name": lc.get("short_name") or "",
+            "site_url": lc_full.get("site_url") or "",
+            "banner_url": lc_full.get("banner_url") or "",
+            "match_kind": "fuzzy",
+            "candidate_ids": ",".join(str(c) for c in cand_ids),
+            "lc_payload": json.dumps(lc_payload),
+            "atlas_payload": json.dumps(atlas_payload),
+            "last_seen": now,
+            "first_seen": now,
+        }
+        enqueueLcReview(qrow)
+
+        # FK child first, then the orphaned atlas parent.
+        deleteLewdcornerByLcId(lc_id)
+        owners = getAtlasSourceOwners(old_atlas_id)
+        if owners:
+            # Shouldn't happen for an LC-only row, but never delete a row an
+            # authoritative source still references.
+            skipped_owned += 1
+            print(dim("[queued, kept atlas] ") + line
+                  + dim(f"  (still owned by {', '.join(owners)})"))
+        else:
+            deleteAtlasById(old_atlas_id)
+            print(green("[deferred] ") + line)
+        deferred += 1
+
+    verb = "would defer" if dry_run else "deferred"
+    print(green(
+        f"\nDefer pass: {deferred} {verb} (>= {threshold:.0%}), "
+        f"{below} below threshold left in place, "
+        f"{nocand} with no candidate above {floor:.0%}"
+        + (f", {skipped_owned} queued but atlas kept (owned)"
+           if skipped_owned else "")
+        + "."))
+
+
 def run_cleanup():
     flagged = _existing_multimatch_lc_rows()
     if not flagged:
@@ -576,6 +713,18 @@ def main():
                          "this score (e.g. 0.9); off by default")
     qp = sub.add_parser("queue", help="resolve the ongoing review queue")
     qp.add_argument("--kind", choices=["multi", "fuzzy"], default=None)
+    dp = sub.add_parser(
+        "defer",
+        help="batch: park high-confidence LC-only rows in the review queue "
+             "and delete their orphaned atlas rows (non-interactive)")
+    dp.add_argument("--threshold", type=float, default=0.8,
+                    help="minimum top-match score to defer a row "
+                         "(0-1, default 0.8)")
+    dp.add_argument("--floor", type=float, default=0.55,
+                    help="minimum similarity to consider a candidate at all "
+                         "(0-1, default 0.55)")
+    dp.add_argument("--dry-run", action="store_true",
+                    help="show what would be deferred without changing the DB")
     args = ap.parse_args()
 
     print(dim(f"DB: {config.env_status()}"))
@@ -586,6 +735,9 @@ def main():
             run_fuzzy_cleanup(floor=args.floor, auto=args.auto)
         elif args.cmd == "queue":
             run_queue(kind=args.kind)
+        elif args.cmd == "defer":
+            run_defer(threshold=args.threshold, floor=args.floor,
+                      dry_run=args.dry_run)
     except (KeyboardInterrupt, EOFError):
         print("\nInterrupted.")
         sys.exit(1)

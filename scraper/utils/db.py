@@ -508,6 +508,17 @@ def deleteLewdcornerByLcId(lc_id, db_type=None):
          (int(lc_id),), commit=True)
 
 
+def getLewdcornerRowByLcId(lc_id, db_type=None):
+    """Return the full lewdcorner row (all columns) as a dict, or None.
+    Used by the reconciler's `defer` pass to rebuild the lc_payload that the
+    review queue needs so the game can be recreated/relinked later without
+    re-scraping."""
+    return _run(
+        "SELECT * FROM lewdcorner WHERE lc_id = %s LIMIT 1",
+        (int(lc_id),), fetch="one", dict_cursor=True,
+    )
+
+
 # ---------------------------------------------------- review queue (LC)
 
 def enqueueLcReview(row, db_type=None):
