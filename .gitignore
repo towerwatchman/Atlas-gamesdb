@@ -11,10 +11,10 @@ __pycache__/
 # data / output
 data.db
 *.db
-*.json
 *.update
 public_html/packages/
 
 # editor
 .vscode/
 *.zip
+lc_cookies.json

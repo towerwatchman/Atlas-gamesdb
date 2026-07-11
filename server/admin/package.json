@@ -1,0 +1,18 @@
+{
+  "name": "atlas-admin",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Admin tool for the Atlas games database: edit games, merge duplicates, work the LewdCorner review queue. One install, one process.",
+  "type": "module",
+  "workspaces": [
+    "web",
+    "server"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace @atlas-admin/web",
+    "seed": "npm run seed --workspace @atlas-admin/server",
+    "start": "npm run build && npm start --workspace @atlas-admin/server",
+    "serve": "npm start --workspace @atlas-admin/server",
+    "dev": "npm run build --workspace @atlas-admin/web && npm run dev --workspace @atlas-admin/server"
+  }
+}
