@@ -1,10 +1,16 @@
 // ---------------------------------------------------------------------------
-// Atlas Admin API server.
+// Atlas server.
 //
-// Serves the JSON API under /api/* and, in production, the built React app
-// from ./public (so the whole admin tool runs on one origin behind your
-// existing web server / reverse proxy). The Python scraper and the read-only
-// updates.php endpoint are entirely separate and untouched.
+// Serves ONE React app at the root:
+//   /            public landing page (starfield)
+//   /admin       admin tool (login-gated in the UI)
+//
+// Two API surfaces:
+//   GET /api/updates        PUBLIC, read-only feed for the Atlas client
+//                           (replaces the old updates.php — same response shape)
+//   /admin/api/*            admin API (auth-gated), used by the /admin UI
+//
+// One Node process, one origin. The Python scraper is untouched.
 // ---------------------------------------------------------------------------
 import express from 'express';
 import cookieParser from 'cookie-parser';
@@ -18,6 +24,7 @@ import atlasRoutes from './routes/atlas.js';
 import duplicateRoutes from './routes/duplicates.js';
 import queueRoutes from './routes/queue.js';
 import statsRoutes from './routes/stats.js';
+import updatesRoutes from './routes/updates.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -40,22 +47,25 @@ if (env.CORS_ORIGINS.length) {
   });
 }
 
+// --- PUBLIC API ------------------------------------------------------------
+// The Atlas client polls this; no auth. Kept at /api/updates to match the old
+// Apache alias so the client needs no change.
+app.use('/api/updates', updatesRoutes);
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
-// Public auth endpoints (login/logout); the rest of /auth requires a session.
-app.use('/api/auth', authRoutes);
+// --- ADMIN API (namespaced under /admin/api, auth-gated) -------------------
+app.use('/admin/api/auth', authRoutes);
+app.use('/admin/api/atlas', requireAuth, atlasRoutes);
+app.use('/admin/api/duplicates', requireAuth, duplicateRoutes);
+app.use('/admin/api/queue', requireAuth, queueRoutes);
+app.use('/admin/api/stats', requireAuth, statsRoutes);
 
-// Everything below needs a signed-in admin.
-app.use('/api/atlas', requireAuth, atlasRoutes);
-app.use('/api/duplicates', requireAuth, duplicateRoutes);
-app.use('/api/queue', requireAuth, queueRoutes);
-app.use('/api/stats', requireAuth, statsRoutes);
-
-// Serve the built frontend in production.
+// --- Static React app + SPA fallback ---------------------------------------
 const publicDir = path.join(__dirname, '..', 'public');
 app.use(express.static(publicDir));
 app.get('*', (req, res, next) => {
-  if (req.path.startsWith('/api/')) return next();
+  // Never let API paths fall through to the SPA index.
+  if (req.path.startsWith('/api/') || req.path.startsWith('/admin/api/')) return next();
   res.sendFile(path.join(publicDir, 'index.html'), (err) => { if (err) next(); });
 });
 
@@ -65,12 +75,10 @@ app.use((err, req, res, next) => {
 });
 
 app.listen(env.PORT, () => {
-  console.log(`Atlas Admin API listening on http://localhost:${env.PORT}`);
+  console.log(`Atlas server listening on http://localhost:${env.PORT}`);
 });
 
 // Final safety net: a stray rejection anywhere should be logged, never fatal.
-// Route-level errors are already caught by safeRouter + the handler above;
-// this covers anything outside the request lifecycle.
 process.on('unhandledRejection', (err) => {
   console.error('Unhandled rejection (kept alive):', err);
 });

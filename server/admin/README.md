@@ -1,25 +1,22 @@
-# Atlas Admin
+# Atlas
 
-A small, self-contained admin tool for the Atlas games database. It lets a
-signed-in admin:
+One React app plus a Node API, served as a single site:
+
+- `/` — public landing page (starfield), visible to everyone.
+- `/admin` — the admin tool, gated by a login screen.
+- `GET /api/updates` — **public, read-only** feed the Atlas client polls
+  (replaces the old `updates.php`; identical response shape).
+- `/admin/api/*` — the admin API (auth-gated), used by the `/admin` UI.
+
+It runs as one Node process on one origin. The Python scraper is untouched.
+
+The admin tool lets a signed-in admin:
 
 1. **Edit any game** in the `atlas` table. Edited rows are flagged
    (`edited` / `edited_at` / `edited_by`) and every field change is recorded in
    an `atlas_audit` log.
-2. **Find and merge duplicates.** Two detectors run over the `atlas` table —
-   exact `id_name` collisions and fuzzy title+creator near-matches (numbered
-   sequels excluded) — ported directly from `find_duplicates.py`, so the tool
-   surfaces the same groups the CLI does. Choosing a survivor repoints every
-   source row (`f95_zone` / `lewdcorner` / `dlsite` / `sxs`) onto it and hard-
-   deletes any duplicate atlas row that nothing references anymore. A row still
-   owned by another source is never deleted.
-3. **Work the LewdCorner review queue** (`lc_review_queue`). For each parked
-   thread, link it to a candidate atlas game, add it as a brand-new game, or
-   dismiss it.
-
-It runs **alongside** the existing static site and the read-only `updates.php`
-endpoint, and it **does not touch the Python scraper** — the scraper keeps
-writing exactly as before. This app just adds a separate read/write surface.
+2. **Find and merge duplicates** (see "How duplicates work" below).
+3. **Work the LewdCorner review queue** (`lc_review_queue`).
 
 ## Layout
 
@@ -127,14 +124,113 @@ node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 | `npm start`      | Build + serve (one process). Use this normally.          |
 | `npm run serve`  | Serve only, without rebuilding (if `public/` is current).|
 
-## Deployment (Ubuntu)
+## Deployment (Ubuntu + Apache)
 
-1. Apply the SQL migration and create the `atlas_admin` MySQL user.
-2. From `server/admin/`: `npm install`, fill `server/.env`, `npm run seed`.
-3. Run it with `NODE_ENV=production npm start` under a process manager
-   (systemd or pm2), behind your existing reverse proxy on an admin-only
-   path/subdomain. `NODE_ENV=production` marks the session cookie `secure`, so
-   serve over HTTPS.
+The whole site is now this one app, so Apache reverse-proxies **everything** to
+the Node process. Your old static `index.html` and `updates.php` are replaced:
+the landing page is served by React at `/`, and the client feed is the Node
+route `/api/updates`.
+
+### 1. Put the app outside the web root
+
+Apache no longer serves files from `/var/www/html` for this site — it proxies
+to Node — so the app should live somewhere non-public:
+
+```bash
+sudo mv /var/www/html /opt/atlas          # or clone your repo to /opt/atlas
+sudo chown -R www-data:www-data /opt/atlas
+cd /opt/atlas/server/admin                # wherever this project's root is
+```
+
+### 2. Configure, migrate, build
+
+```bash
+npm install
+cp server/.env.example server/.env
+nano server/.env         # DB creds, JWT_SECRET, PORT=8787, NODE_ENV=production
+mysql -u root -p games < sql/001_admin_schema.sql
+mysql -u root -p games < sql/002_floating_sources.sql
+npm run seed
+npm run build
+```
+
+The DB user in `.env` needs read/write. The public `/api/updates` feed uses the
+same connection; if you want it read-only-isolated like the old PHP, keep using
+a read-only user and note the admin writes need their own — but a single
+read/write user is fine for one process.
+
+### 3. Run under pm2
+
+```bash
+sudo npm install -g pm2
+cd /opt/atlas/server/admin/server         # start here so .env is found
+pm2 start src/index.js --name atlas
+pm2 save
+pm2 startup                               # run the printed command, then `pm2 save`
+```
+
+### 4. Apache reverse proxy (whole site)
+
+```bash
+sudo a2enmod proxy proxy_http headers
+```
+
+Replace your site's vhost body with a proxy to Node:
+
+```apache
+<VirtualHost *:80>
+    ServerName atlas-gamesdb.com
+
+    ProxyPreserveHost On
+    ProxyPass        / http://127.0.0.1:8787/
+    ProxyPassReverse / http://127.0.0.1:8787/
+    RequestHeader set X-Forwarded-Proto "https"
+</VirtualHost>
+```
+
+```bash
+sudo apache2ctl configtest && sudo systemctl reload apache2
+```
+
+### 5. HTTPS (required)
+
+The admin session cookie is `secure` in production, so admin login only works
+over HTTPS:
+
+```bash
+sudo apt install -y certbot python3-certbot-apache
+sudo certbot --apache -d atlas-gamesdb.com
+```
+
+### 6. Firewall
+
+```bash
+sudo ufw allow OpenSSH
+sudo ufw allow 'Apache Full'
+sudo ufw enable
+```
+
+Never expose 8787 (Node) or 3306 (MySQL) publicly.
+
+### Client compatibility
+
+The Atlas client keeps polling `https://atlas-gamesdb.com/api/updates`. The Node
+route returns the same JSON as the old `updates.php` — an array of
+`{ date:int, name, md5, is_full:bool }` ordered by date DESC, `[]` when empty —
+so no client change is needed. Package downloads from `/packages/` still need to
+be served: either keep an Apache `Alias /packages /path/to/packages` above the
+ProxyPass, or serve them from Node. Confirm where `/packages/` lives before
+cutover.
+
+### Redeploying
+
+```bash
+cd /opt/atlas/server/admin
+git pull
+npm install
+npm run build
+pm2 restart atlas
+```
 
 ## Notes
 

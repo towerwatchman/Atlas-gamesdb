@@ -40,6 +40,8 @@ export function cookieOptions() {
     sameSite: 'lax',
     secure: process.env.NODE_ENV === 'production',
     maxAge: env.SESSION_HOURS * 3600 * 1000,
-    path: '/',
+    // Admin API lives under /admin/api, so the session cookie only needs to be
+    // sent for /admin/* requests — not the public landing page or client feed.
+    path: '/admin',
   };
 }
