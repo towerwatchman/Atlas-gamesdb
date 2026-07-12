@@ -1,4 +1,5 @@
 import express from 'express';
+import { safeRouter } from '../lib/safeRouter.js';
 import rateLimit from 'express-rate-limit';
 import { q, q1, write } from '../lib/db.js';
 import {
@@ -6,7 +7,7 @@ import {
   COOKIE_NAME, cookieOptions,
 } from '../lib/auth.js';
 
-const router = express.Router();
+const router = safeRouter(express.Router());
 
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,

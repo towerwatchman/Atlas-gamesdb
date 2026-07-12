@@ -92,17 +92,18 @@ export async function editAtlasRow(atlasId, changes, user) {
 }
 
 export async function getAuditForAtlas(atlasId, limit = 200) {
+  const lim = Math.min(Math.max(parseInt(limit, 10) || 200, 1), 1000);
   return q(
     `SELECT audit_id, atlas_id, field, old_value, new_value, admin_user, ts
-     FROM atlas_audit WHERE atlas_id = ? ORDER BY ts DESC, audit_id DESC LIMIT ?`,
-    [atlasId, limit],
+     FROM atlas_audit WHERE atlas_id = ? ORDER BY ts DESC, audit_id DESC LIMIT ${lim}`,
+    [atlasId],
   );
 }
 
 export async function getRecentAudit(limit = 200) {
+  const lim = Math.min(Math.max(parseInt(limit, 10) || 200, 1), 1000);
   return q(
     `SELECT audit_id, atlas_id, field, old_value, new_value, admin_user, ts
-     FROM atlas_audit ORDER BY ts DESC, audit_id DESC LIMIT ?`,
-    [limit],
+     FROM atlas_audit ORDER BY ts DESC, audit_id DESC LIMIT ${lim}`,
   );
 }

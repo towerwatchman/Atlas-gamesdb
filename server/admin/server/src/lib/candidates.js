@@ -18,13 +18,14 @@ export async function findFuzzyAtlasCandidates(shortName, creator, limit = 25) {
   const cr = (creator || '').trim().toUpperCase();
   if (!sn && !cr) return [];
   const snPref = sn.slice(0, Math.max(4, Math.min(sn.length, 8)));
+  const lim = Math.min(Math.max(parseInt(limit, 10) || 25, 1), 200);
   const rows = await q(
     `SELECT atlas_id
        FROM atlas
       WHERE short_name LIKE ? OR UPPER(creator) LIKE ?
       ORDER BY ((short_name LIKE ?) + (UPPER(creator) LIKE ?)) DESC, atlas_id
-      LIMIT ?`,
-    [`${snPref}%`, `${cr}%`, `${snPref}%`, `${cr}%`, Number(limit)],
+      LIMIT ${lim}`,
+    [`${snPref}%`, `${cr}%`, `${snPref}%`, `${cr}%`],
   );
   return rows.map((r) => r.atlas_id);
 }

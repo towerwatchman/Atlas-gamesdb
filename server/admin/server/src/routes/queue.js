@@ -1,4 +1,5 @@
 import express from 'express';
+import { safeRouter } from '../lib/safeRouter.js';
 import {
   getQueue, getQueueItem, candidatesFor,
   linkQueueItem, newFromQueueItem, dismissQueueItem,
@@ -6,7 +7,7 @@ import {
 import { getAtlasRowsByIds } from '../lib/candidates.js';
 import { getSourceOwners, getSourceIds } from '../lib/merge.js';
 
-const router = express.Router();
+const router = safeRouter(express.Router());
 
 // GET /api/queue?kind=multi|fuzzy
 router.get('/', async (req, res) => {

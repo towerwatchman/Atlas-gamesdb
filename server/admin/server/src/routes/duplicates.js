@@ -1,9 +1,10 @@
 import express from 'express';
+import { safeRouter } from '../lib/safeRouter.js';
 import { loadAtlasWithSources, rowSources, getAtlasRowsByIds } from '../lib/candidates.js';
 import { findExactGroups, findFuzzyGroups } from '../lib/matching.js';
 import { mergeGroup, getSourceOwners, getSourceIds } from '../lib/merge.js';
 
-const router = express.Router();
+const router = safeRouter(express.Router());
 
 function groupSources(members) {
   const s = new Set();

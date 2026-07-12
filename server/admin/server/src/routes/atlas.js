@@ -1,4 +1,5 @@
 import express from 'express';
+import { safeRouter } from '../lib/safeRouter.js';
 import { q } from '../lib/db.js';
 import {
   getAtlasRow, editAtlasRow, getAuditForAtlas, getRecentAudit,
@@ -6,7 +7,7 @@ import {
 } from '../lib/atlas.js';
 import { getSourceIds } from '../lib/merge.js';
 
-const router = express.Router();
+const router = safeRouter(express.Router());
 
 // GET /api/atlas?search=...&edited=0|1&limit=&offset=
 router.get('/', async (req, res) => {
@@ -23,8 +24,10 @@ router.get('/', async (req, res) => {
     params.push(Number(edited));
   }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-  const lim = Math.min(Number(limit) || 50, 200);
-  const off = Number(offset) || 0;
+  // LIMIT/OFFSET cannot be bound as prepared-statement params in MySQL, so
+  // they are coerced to safe non-negative integers and inlined directly.
+  const lim = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200);
+  const off = Math.max(parseInt(offset, 10) || 0, 0);
 
   const rows = await q(
     `SELECT a.atlas_id, a.title, a.creator, a.developer, a.version,
@@ -35,8 +38,8 @@ router.get('/', async (req, res) => {
        LEFT JOIN lewdcorner l ON l.atlas_id = a.atlas_id
        ${whereSql}
        ORDER BY a.atlas_id
-       LIMIT ? OFFSET ?`,
-    [...params, lim, off],
+       LIMIT ${lim} OFFSET ${off}`,
+    params,
   );
   const countRow = await q(`SELECT COUNT(*) AS n FROM atlas a ${whereSql}`, params);
   res.json({ rows, total: countRow[0].n, limit: lim, offset: off });

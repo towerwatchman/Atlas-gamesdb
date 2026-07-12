@@ -65,3 +65,13 @@ app.use((err, req, res, next) => {
 app.listen(env.PORT, () => {
   console.log(`Atlas Admin API listening on http://localhost:${env.PORT}`);
 });
+
+// Final safety net: a stray rejection anywhere should be logged, never fatal.
+// Route-level errors are already caught by safeRouter + the handler above;
+// this covers anything outside the request lifecycle.
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled rejection (kept alive):', err);
+});
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception (kept alive):', err);
+});
