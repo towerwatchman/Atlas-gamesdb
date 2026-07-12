@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Routes, Route, NavLink, Navigate, useNavigate } from 'react-router-dom';
 import { api } from './lib/api.js';
 import Login from './pages/Login.jsx';
+import Home from './pages/Home.jsx';
 import AtlasList from './pages/AtlasList.jsx';
 import Duplicates from './pages/Duplicates.jsx';
 import Queue from './pages/Queue.jsx';
@@ -10,6 +11,7 @@ import { Spinner } from './components/ui.jsx';
 
 function TopBar({ user, onLogout }) {
   const tabs = [
+    ['/home', 'Home'],
     ['/atlas', 'Games'],
     ['/duplicates', 'Duplicates'],
     ['/queue', 'Review queue'],
@@ -65,11 +67,12 @@ export default function App() {
       <TopBar user={user} onLogout={logout} />
       <div className="content">
         <Routes>
+          <Route path="/home" element={<Home user={user} />} />
           <Route path="/atlas" element={<AtlasList />} />
           <Route path="/duplicates" element={<Duplicates />} />
           <Route path="/queue" element={<Queue />} />
           <Route path="/admins" element={<Admins me={user} />} />
-          <Route path="*" element={<Navigate to="/atlas" replace />} />
+          <Route path="*" element={<Navigate to="/home" replace />} />
         </Routes>
       </div>
     </div>

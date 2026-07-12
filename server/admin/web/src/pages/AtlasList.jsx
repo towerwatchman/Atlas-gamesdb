@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { api, fmtTime } from '../lib/api.js';
-import { SourceBadges, Notice, Modal, Spinner } from '../components/ui.jsx';
+import { SourceBadges, SourceLinkList, Notice, Modal, Spinner } from '../components/ui.jsx';
 
 // Fields shown as a wide textarea rather than a single-line input.
 const LONG_FIELDS = new Set(['overview', 'tags', 'genre', 'previews', 'translations']);
@@ -63,7 +63,7 @@ function EditModal({ atlasId, onClose, onSaved }) {
       {!row ? <Spinner /> : (
         <>
           <div style={{ marginBottom: 8 }}>
-            <SourceBadges row={row} />
+            <SourceLinkList links={row._links} />
             {row.edited ? (
               <span className="badge badge-edited" style={{ marginLeft: 8 }}>
                 edited by {row.edited_by} · {fmtTime(row.edited_at)}
@@ -175,7 +175,7 @@ export default function AtlasList() {
               </thead>
               <tbody>
                 {data.rows.map((r) => (
-                  <tr key={r.atlas_id}>
+                  <tr key={r.atlas_id} className="row-click" onClick={() => setEditing(r.atlas_id)}>
                     <td className="mono">{r.atlas_id}</td>
                     <td className="wrap" style={{ minWidth: 200 }}>
                       {r.title}
@@ -185,7 +185,7 @@ export default function AtlasList() {
                     <td>{r.version || <span className="hint">—</span>}</td>
                     <td><SourceBadges row={r} /></td>
                     <td>{r.status || <span className="hint">—</span>}</td>
-                    <td><button className="btn btn-sm" onClick={() => setEditing(r.atlas_id)}>Edit</button></td>
+                    <td><button className="btn btn-sm" onClick={(e) => { e.stopPropagation(); setEditing(r.atlas_id); }}>Edit</button></td>
                   </tr>
                 ))}
               </tbody>

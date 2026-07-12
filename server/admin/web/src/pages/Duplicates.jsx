@@ -1,24 +1,100 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../lib/api.js';
-import { SourceBadges, Notice, Modal, Spinner } from '../components/ui.jsx';
+import { SourceBadges, SourceLinkList, Notice, Modal, Spinner } from '../components/ui.jsx';
 
-function MergeModal({ group, onClose, onDone }) {
+// Prompt shown when a relink leaves an atlas row orphaned.
+function OrphanPrompt({ atlasId, onKeep, onDelete, busy }) {
+  return (
+    <Modal
+      title={`Atlas #${atlasId} is now orphaned`}
+      onClose={onKeep}
+      footer={(
+        <>
+          <button className="btn" onClick={onKeep} disabled={busy}>Keep it</button>
+          <button className="btn btn-danger" onClick={onDelete} disabled={busy}>
+            {busy ? 'Deleting…' : `Delete atlas #${atlasId}`}
+          </button>
+        </>
+      )}
+    >
+      <p>
+        Nothing points at atlas row <strong>#{atlasId}</strong> anymore. You can delete it,
+        or keep it as an empty atlas entry. Source rows were not affected.
+      </p>
+    </Modal>
+  );
+}
+
+// Relink/float a single source row, with candidate lookup for linking.
+function RelinkModal({ link, onClose, onDone }) {
+  const [target, setTarget] = useState('');
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  const label = link.source === 'f95_zone' ? 'F95zone' : link.source === 'lewdcorner' ? 'LewdCorner' : link.source;
+
+  async function act(action) {
+    setErr(''); setBusy(true);
+    try {
+      const res = await api.post('/api/duplicates/relink-source', {
+        table: link.source, sourceId: link.id, action,
+        atlasId: action === 'link' ? Number(target) : undefined,
+      });
+      onDone(res, action);
+    } catch (e) { setErr(e.message); setBusy(false); }
+  }
+
+  return (
+    <Modal
+      title={`Move ${label} source ${link.id}`}
+      onClose={onClose}
+      footer={(
+        <>
+          <button className="btn" onClick={onClose} disabled={busy}>Cancel</button>
+          <button className="btn" onClick={() => act('float')} disabled={busy} title="Unlink from any atlas game">
+            {busy ? '…' : 'Set floating'}
+          </button>
+          <button className="btn btn-primary" onClick={() => act('link')} disabled={busy || !Number(target)}>
+            {busy ? '…' : 'Link to atlas id'}
+          </button>
+        </>
+      )}
+    >
+      <Notice kind="err" onClose={() => setErr('')}>{err}</Notice>
+      <p className="hint" style={{ marginBottom: 12 }}>
+        This source row is never deleted. You can point it at a different atlas game,
+        or set it floating (linked to no game). {link.site_url && (
+          <a href={link.site_url} target="_blank" rel="noreferrer">Open the source thread ↗</a>
+        )}
+      </p>
+      <div className="field">
+        <label>Link to atlas id</label>
+        <input inputMode="numeric" placeholder="e.g. 4821" value={target}
+          onChange={(e) => setTarget(e.target.value.replace(/[^0-9]/g, ''))} />
+      </div>
+    </Modal>
+  );
+}
+
+function MergeModal({ group, onClose, onDone, onRelinkDone }) {
   const [rows, setRows] = useState(null);
   const [survivor, setSurvivor] = useState(null);
+  const [relink, setRelink] = useState(null);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
+  const loadRows = useCallback(() => {
     const ids = group.members.map((m) => m.atlas_id).join(',');
-    api.get(`/api/duplicates/group?ids=${ids}`)
-      .then((r) => {
-        setRows(r);
-        // Default survivor: prefer an f95-backed row (source of truth).
+    return api.get(`/api/duplicates/group?ids=${ids}`).then((r) => {
+      setRows(r);
+      setSurvivor((prev) => {
+        if (prev != null && r.some((x) => x.atlas_id === prev)) return prev;
         const f95 = r.find((x) => x._owners.includes('f95_zone'));
-        setSurvivor((f95 || r[0]).atlas_id);
-      })
-      .catch((e) => setErr(e.message));
+        return (f95 || r[0]).atlas_id;
+      });
+    }).catch((e) => setErr(e.message));
   }, [group]);
+
+  useEffect(() => { loadRows(); }, [loadRows]);
 
   async function merge() {
     setErr(''); setBusy(true);
@@ -33,14 +109,14 @@ function MergeModal({ group, onClose, onDone }) {
 
   return (
     <Modal
-      title="Merge duplicates"
+      title="Resolve duplicate atlas rows"
       onClose={onClose}
       footer={rows && (
         <>
           <span className="hint" style={{ marginRight: 'auto' }}>Keeping #{survivor}</span>
-          <button className="btn" onClick={onClose} disabled={busy}>Cancel</button>
+          <button className="btn" onClick={onClose} disabled={busy}>Close</button>
           <button className="btn btn-primary" onClick={merge} disabled={busy || survivor == null}>
-            {busy ? 'Merging…' : 'Merge into selected'}
+            {busy ? 'Merging…' : 'Merge — keep selected, delete others'}
           </button>
         </>
       )}
@@ -49,40 +125,51 @@ function MergeModal({ group, onClose, onDone }) {
       {!rows ? <Spinner /> : (
         <>
           <p className="hint" style={{ marginBottom: 12 }}>
-            Pick the row to keep. Sources on the other rows are repointed to it, then any
-            row nothing references anymore is deleted. A row still owned by another source is kept.
+            These are duplicate <strong>atlas</strong> rows for the same game. Pick the one to keep —
+            all source rows are repointed to it and the other atlas rows are deleted. To instead move a
+            single source elsewhere or float it, use its <em>Move</em> button (that never deletes the source).
           </p>
           {rows.map((r) => (
-            <label key={r.atlas_id} className={`cand ${survivor === r.atlas_id ? 'chosen' : ''}`} style={{ display: 'block', cursor: 'pointer' }}>
+            <div key={r.atlas_id} className={`cand ${survivor === r.atlas_id ? 'chosen' : ''}`}>
               <div className="cand-top">
-                <div className="row" style={{ gap: 8 }}>
-                  <input
-                    type="radio" name="survivor" style={{ width: 'auto' }}
-                    checked={survivor === r.atlas_id}
-                    onChange={() => setSurvivor(r.atlas_id)}
-                  />
+                <label className="row" style={{ gap: 8, cursor: 'pointer' }}>
+                  <input type="radio" name="survivor" style={{ width: 'auto' }}
+                    checked={survivor === r.atlas_id} onChange={() => setSurvivor(r.atlas_id)} />
                   <span className="cand-title">#{r.atlas_id} · {r.title}</span>
-                </div>
-                <span>
-                  {r._owners.length
-                    ? r._owners.map((o) => <span key={o} className="badge badge-muted" style={{ marginLeft: 4 }}>{o}</span>)
-                    : <span className="orphan">orphan (no source)</span>}
-                </span>
+                </label>
+                {r._owners.length === 0 && <span className="orphan">orphan</span>}
               </div>
               <div className="kv">
                 <span className="k">creator</span><span>{r.creator || '—'}</span>
-                <span className="k">developer</span><span>{r.developer || '—'}</span>
                 <span className="k">version</span><span>{r.version || '—'}</span>
                 <span className="k">id_name</span><span className="mono">{r.id_name}</span>
-                <span className="k">sources</span>
-                <span>
-                  {r._sources.f95_id != null && <span className="badge badge-f95">f95 {r._sources.f95_id}</span>}{' '}
-                  {r._sources.lc_id != null && <span className="badge badge-lc">lc {r._sources.lc_id}</span>}
-                </span>
+                <span className="k">sources</span><span><SourceLinkList links={r._links} /></span>
               </div>
-            </label>
+              {r._links && r._links.length > 0 && (
+                <div className="row" style={{ marginTop: 8, gap: 6 }}>
+                  {r._links.map((l) => (
+                    <button key={`${l.source}-${l.id}`} className="btn btn-sm"
+                      onClick={() => setRelink(l)}>
+                      Move {l.source === 'f95_zone' ? 'f95' : 'lc'} {l.id}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           ))}
         </>
+      )}
+
+      {relink && (
+        <RelinkModal
+          link={relink}
+          onClose={() => setRelink(null)}
+          onDone={(res, action) => {
+            setRelink(null);
+            loadRows();
+            onRelinkDone(res, action);
+          }}
+        />
       )}
     </Modal>
   );
@@ -95,6 +182,8 @@ export default function Duplicates() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [merging, setMerging] = useState(null);
+  const [orphan, setOrphan] = useState(null);
+  const [orphanBusy, setOrphanBusy] = useState(false);
   const [err, setErr] = useState('');
   const [ok, setOk] = useState('');
 
@@ -109,13 +198,26 @@ export default function Duplicates() {
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
 
-  function mergeResultMsg(res) {
+  function mergeMsg(res) {
     const parts = [];
-    if (res.deleted.length) parts.push(`deleted ${res.deleted.length} duplicate row(s)`);
-    if (res.relinked.length) parts.push(`repointed ${res.relinked.length} source link(s)`);
-    if (res.kept.length) parts.push(`kept ${res.kept.length} still-owned row(s)`);
-    if (res.conflicts.length) parts.push(`${res.conflicts.length} conflict(s) left for manual review`);
+    if (res.deleted?.length) parts.push(`deleted ${res.deleted.length} duplicate atlas row(s)`);
+    if (res.relinked?.length) parts.push(`repointed ${res.relinked.length} source link(s)`);
     return parts.length ? `Merged: ${parts.join(', ')}.` : 'Nothing to merge.';
+  }
+
+  function handleRelinkDone(res, action) {
+    setOk(action === 'float' ? 'Source set floating.' : 'Source relinked.');
+    if (res.orphaned != null) setOrphan(res.orphaned);
+  }
+
+  async function deleteOrphan() {
+    setOrphanBusy(true);
+    try {
+      await api.post('/api/duplicates/delete-orphan', { atlasId: orphan });
+      setOk(`Deleted orphaned atlas #${orphan}.`);
+      setOrphan(null);
+      if (merging) load();
+    } catch (e) { setErr(e.message); } finally { setOrphanBusy(false); }
   }
 
   return (
@@ -123,7 +225,7 @@ export default function Duplicates() {
       <div className="page-head">
         <div>
           <h1>Duplicates</h1>
-          <p>Distinct atlas rows that are almost certainly the same game. Merge them onto one surviving id.</p>
+          <p>Find duplicate atlas rows and merge them. Move or float individual source rows without deleting them.</p>
         </div>
       </div>
 
@@ -164,14 +266,14 @@ export default function Duplicates() {
             {data.atlasCount} atlas rows · {data.exact} exact group(s) · {data.fuzzy} fuzzy group(s)
           </p>
           {data.groups.length === 0 ? (
-            <div className="panel empty">No duplicate groups at these settings.</div>
+            <div className="panel empty">No duplicate atlas rows at these settings.</div>
           ) : data.groups.map((g) => (
             <div className="panel panel-pad group" key={g.members.map((m) => m.atlas_id).join('-')}>
               <div className="group-head">
                 <span className={`badge badge-${g.kind}`}>{g.kind}</span>
                 <span className="key">{g.key}</span>
                 <span className="hint">{g.members.length} rows · {g.sources.join(' + ') || 'no source'}</span>
-                <button className="btn btn-sm btn-primary" style={{ marginLeft: 'auto' }} onClick={() => setMerging(g)}>Review &amp; merge</button>
+                <button className="btn btn-sm btn-primary" style={{ marginLeft: 'auto' }} onClick={() => setMerging(g)}>Review &amp; resolve</button>
               </div>
               <div className="table-wrap">
                 <table>
@@ -198,7 +300,17 @@ export default function Duplicates() {
         <MergeModal
           group={merging}
           onClose={() => setMerging(null)}
-          onDone={(res) => { setMerging(null); setOk(mergeResultMsg(res)); load(); }}
+          onDone={(res) => { setMerging(null); setOk(mergeMsg(res)); load(); }}
+          onRelinkDone={handleRelinkDone}
+        />
+      )}
+
+      {orphan != null && (
+        <OrphanPrompt
+          atlasId={orphan}
+          busy={orphanBusy}
+          onKeep={() => setOrphan(null)}
+          onDelete={deleteOrphan}
         />
       )}
     </>

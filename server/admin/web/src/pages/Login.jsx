@@ -17,7 +17,7 @@ export default function Login({ onLogin }) {
     try {
       const d = await api.post('/api/auth/login', { username, password });
       onLogin(d.username);
-      navigate('/atlas');
+      navigate('/home');
     } catch (e2) {
       setErr(e2.message);
     } finally {

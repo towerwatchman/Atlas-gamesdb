@@ -51,6 +51,39 @@ Apply it once:
 mysql -u root -p games < server/admin/sql/001_admin_schema.sql
 ```
 
+### Migration 002 — floating sources (required for the duplicate model)
+
+`sql/002_floating_sources.sql` relaxes `atlas_id` on `f95_zone` and
+`lewdcorner` so the admin tool can support floating and many-to-one links:
+
+- `atlas_id` becomes **NULLable** — a source row can be "floating" (linked to
+  no atlas game).
+- the **UNIQUE** constraint on `atlas_id` is dropped — multiple f95/lc rows may
+  share one atlas_id.
+- a `floating` flag column is added.
+- the **FOREIGN KEY is kept** — the DB still refuses to delete an atlas row a
+  source references, which is what powers the "this row is now orphaned, delete
+  it?" prompt.
+
+This was verified safe for the scraper: the scraper resolves rows by primary
+key (`f95_id`/`lc_id`), always writes a concrete `atlas_id`, and its
+`ON DUPLICATE KEY UPDATE` fires on the primary key — it never depends on
+`atlas_id` being `NOT NULL` or `UNIQUE`.
+
+```bash
+mysql -u root -p games < server/admin/sql/002_floating_sources.sql
+```
+
+### How duplicates work
+
+- **Atlas duplicates** (Duplicates page → Review & resolve → Merge): two atlas
+  rows for the same game. Pick the survivor; every source row is repointed to
+  it and the losing atlas rows are deleted. Source rows are never deleted.
+- **Moving a single source** (the *Move* buttons): point one f95/lc row at a
+  different atlas game, or set it floating. The source row is never deleted. If
+  the move leaves its previous atlas row with no sources, you're prompted to
+  delete that now-orphaned atlas row (delete only on confirm).
+
 Create a **read/write** MySQL user for the admin app (separate from the
 read-only `apireader` used by `updates.php`), e.g.:
 

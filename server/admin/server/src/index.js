@@ -17,6 +17,7 @@ import authRoutes from './routes/auth.js';
 import atlasRoutes from './routes/atlas.js';
 import duplicateRoutes from './routes/duplicates.js';
 import queueRoutes from './routes/queue.js';
+import statsRoutes from './routes/stats.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -48,6 +49,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/atlas', requireAuth, atlasRoutes);
 app.use('/api/duplicates', requireAuth, duplicateRoutes);
 app.use('/api/queue', requireAuth, queueRoutes);
+app.use('/api/stats', requireAuth, statsRoutes);
 
 // Serve the built frontend in production.
 const publicDir = path.join(__dirname, '..', 'public');

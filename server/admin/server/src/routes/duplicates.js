@@ -2,7 +2,10 @@ import express from 'express';
 import { safeRouter } from '../lib/safeRouter.js';
 import { loadAtlasWithSources, rowSources, getAtlasRowsByIds } from '../lib/candidates.js';
 import { findExactGroups, findFuzzyGroups } from '../lib/matching.js';
-import { mergeGroup, getSourceOwners, getSourceIds } from '../lib/merge.js';
+import {
+  mergeAtlasGroup, relinkSource, deleteAtlasIfOrphaned,
+  getSourceOwners, getSourceIds, getSourceLinks,
+} from '../lib/merge.js';
 
 const router = safeRouter(express.Router());
 
@@ -21,6 +24,7 @@ function scopeOk(members, scope) {
 }
 
 // GET /api/duplicates?scope=all|f95|lc|cross&floor=0.90&kinds=exact,fuzzy
+// Finds duplicate ATLAS rows (the same game represented by 2+ atlas_ids).
 router.get('/', async (req, res) => {
   const scope = req.query.scope || 'all';
   const floor = Math.min(Math.max(Number(req.query.floor) || 0.90, 0.5), 1);
@@ -51,7 +55,7 @@ router.get('/', async (req, res) => {
   });
 });
 
-// GET /api/duplicates/group?ids=1,2,3  — full rows + owners for a chosen group
+// GET /api/duplicates/group?ids=1,2,3 — full rows + owners + links for a group
 router.get('/group', async (req, res) => {
   const ids = (req.query.ids || '').split(',').map(Number).filter(Boolean);
   const rows = await getAtlasRowsByIds(ids);
@@ -61,12 +65,14 @@ router.get('/group', async (req, res) => {
       ...r,
       _owners: await getSourceOwners(r.atlas_id),
       _sources: await getSourceIds(r.atlas_id),
+      _links: await getSourceLinks(r.atlas_id),
     });
   }
   res.json(enriched);
 });
 
 // POST /api/duplicates/merge  { survivorId, groupIds: [] }
+// Merge duplicate ATLAS rows: relink sources onto survivor, delete losers.
 router.post('/merge', async (req, res) => {
   const { survivorId, groupIds } = req.body || {};
   if (!survivorId || !Array.isArray(groupIds) || groupIds.length < 2) {
@@ -75,12 +81,32 @@ router.post('/merge', async (req, res) => {
   if (!groupIds.map(Number).includes(Number(survivorId))) {
     return res.status(400).json({ error: 'The row to keep must be part of the group.' });
   }
-  try {
-    const result = await mergeGroup({ survivorId, groupIds, user: req.user.username });
-    res.json(result);
-  } catch (err) {
-    res.status(err.status || 500).json({ error: err.message });
+  const result = await mergeAtlasGroup({ survivorId, groupIds, user: req.user.username });
+  res.json(result);
+});
+
+// POST /api/duplicates/relink-source
+//   { table:'f95_zone'|'lewdcorner', sourceId, action:'float'|'link', atlasId? }
+// Relink or float a single SOURCE row. Source is never deleted. If the move
+// orphans the previous atlas row, `orphaned` comes back for a delete prompt.
+router.post('/relink-source', async (req, res) => {
+  const { table, sourceId, action, atlasId } = req.body || {};
+  if (!table || !sourceId || !['float', 'link'].includes(action)) {
+    return res.status(400).json({ error: 'Provide table, sourceId, and a valid action.' });
   }
+  const result = await relinkSource({
+    table, sourceId: Number(sourceId), action, atlasId, user: req.user.username,
+  });
+  res.json(result);
+});
+
+// POST /api/duplicates/delete-orphan  { atlasId }
+// Delete an atlas row ONLY if it is orphaned (no source references it).
+router.post('/delete-orphan', async (req, res) => {
+  const { atlasId } = req.body || {};
+  if (!atlasId) return res.status(400).json({ error: 'Missing atlasId.' });
+  const result = await deleteAtlasIfOrphaned({ atlasId, user: req.user.username });
+  res.json(result);
 });
 
 export default router;

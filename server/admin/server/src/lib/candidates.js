@@ -48,7 +48,8 @@ export async function loadAtlasWithSources() {
     `SELECT a.atlas_id, a.title, a.creator, a.developer,
             a.short_name, a.id_name, a.version, a.engine, a.status,
             a.edited, a.edited_at, a.edited_by,
-            f.f95_id, l.lc_id
+            f.f95_id, f.site_url AS f95_url,
+            l.lc_id, l.site_url AS lc_url
        FROM atlas a
        LEFT JOIN f95_zone   f ON f.atlas_id = a.atlas_id
        LEFT JOIN lewdcorner l ON l.atlas_id = a.atlas_id

@@ -5,7 +5,7 @@ import {
   getAtlasRow, editAtlasRow, getAuditForAtlas, getRecentAudit,
   EDITABLE_ATLAS_COLUMNS,
 } from '../lib/atlas.js';
-import { getSourceIds } from '../lib/merge.js';
+import { getSourceIds, getSourceLinks } from '../lib/merge.js';
 
 const router = safeRouter(express.Router());
 
@@ -32,7 +32,8 @@ router.get('/', async (req, res) => {
   const rows = await q(
     `SELECT a.atlas_id, a.title, a.creator, a.developer, a.version,
             a.engine, a.status, a.id_name, a.edited, a.edited_at, a.edited_by,
-            f.f95_id, l.lc_id
+            f.f95_id, f.site_url AS f95_url,
+            l.lc_id, l.site_url AS lc_url
        FROM atlas a
        LEFT JOIN f95_zone f ON f.atlas_id = a.atlas_id
        LEFT JOIN lewdcorner l ON l.atlas_id = a.atlas_id
@@ -57,7 +58,8 @@ router.get('/:id', async (req, res) => {
   const row = await getAtlasRow(Number(req.params.id));
   if (!row) return res.status(404).json({ error: 'No atlas row with that id.' });
   const sources = await getSourceIds(Number(req.params.id));
-  res.json({ ...row, _sources: sources });
+  const links = await getSourceLinks(Number(req.params.id));
+  res.json({ ...row, _sources: sources, _links: links });
 });
 
 router.get('/:id/audit', async (req, res) => {
