@@ -59,8 +59,8 @@ function AdminApp() {
   if (!user) {
     return (
       <Routes>
-        <Route path="/admin" element={<Login onLogin={setUser} />} />
-        <Route path="/admin/*" element={<Navigate to="/admin" replace />} />
+        <Route path="/" element={<Login onLogin={setUser} />} />
+        <Route path="*" element={<Navigate to="/admin" replace />} />
       </Routes>
     );
   }
@@ -70,13 +70,13 @@ function AdminApp() {
       <TopBar user={user} onLogout={logout} />
       <div className="content">
         <Routes>
-          <Route path="/admin" element={<Navigate to="/admin/home" replace />} />
-          <Route path="/admin/home" element={<Home user={user} />} />
-          <Route path="/admin/atlas" element={<AtlasList />} />
-          <Route path="/admin/duplicates" element={<Duplicates />} />
-          <Route path="/admin/queue" element={<Queue />} />
-          <Route path="/admin/admins" element={<Admins me={user} />} />
-          <Route path="/admin/*" element={<Navigate to="/admin/home" replace />} />
+          <Route path="/" element={<Navigate to="/admin/home" replace />} />
+          <Route path="/home" element={<Home user={user} />} />
+          <Route path="/atlas" element={<AtlasList />} />
+          <Route path="/duplicates" element={<Duplicates />} />
+          <Route path="/queue" element={<Queue />} />
+          <Route path="/admins" element={<Admins me={user} />} />
+          <Route path="*" element={<Navigate to="/admin/home" replace />} />
         </Routes>
       </div>
     </div>
