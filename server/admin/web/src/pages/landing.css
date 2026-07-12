@@ -1,0 +1,126 @@
+/* Landing page styles — scoped under .landing-page so they never affect the
+   admin UI. Ported verbatim from the original static index.html. */
+.landing-page {
+  --lp-bg: #16191d;
+  --lp-panel: #1b1f24;
+  --lp-teal: #2ba3c7;
+  --lp-teal-bright: #5fc4e0;
+  --lp-ink: #eef2f5;
+  --lp-ink-2: #c3ccd3;
+  --lp-muted: #9aa4ad;
+  --lp-muted-2: #8a949c;
+  --lp-hair: rgba(255,255,255,0.06);
+
+  background: var(--lp-bg);
+  color: var(--lp-ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  line-height: 1.6;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+.landing-page a { text-decoration: none; }
+.landing-page .wrap { max-width: 1080px; margin: 0 auto; }
+
+/* Nav */
+.landing-page nav {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 32px; border-bottom: 0.5px solid var(--lp-hair); background: var(--lp-panel);
+  position: sticky; top: 0; z-index: 10;
+}
+.landing-page .brand { display: flex; align-items: center; gap: 12px; }
+.landing-page .brand img { height: 34px; width: auto; display: block; }
+.landing-page .brand span { font-size: 21px; font-weight: 500; letter-spacing: 0.3px; color: var(--lp-ink); }
+.landing-page .version-tag {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 13px; font-weight: 500; color: var(--lp-teal-bright);
+  background: rgba(43,163,199,0.12); padding: 7px 14px; border-radius: 20px;
+  transition: background .15s;
+}
+.landing-page .version-tag:hover { background: rgba(43,163,199,0.2); }
+.landing-page .version-tag .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--lp-teal); flex: none; }
+.landing-page .nav-right { display: flex; align-items: center; gap: 14px; }
+.landing-page .admin-link {
+  font-size: 13px; font-weight: 500; color: var(--lp-muted);
+  padding: 7px 14px; border-radius: 20px; border: 0.5px solid rgba(255,255,255,0.12);
+  transition: color .15s, border-color .15s, background .15s;
+}
+.landing-page .admin-link:hover { color: var(--lp-ink); border-color: rgba(43,163,199,0.4); background: var(--lp-panel); }
+
+/* Hero */
+.landing-page header { position: relative; text-align: center; padding: 84px 24px 96px; }
+.landing-page .starfield {
+  position: absolute; top: 0; left: 0; width: 100%; height: calc(100% + 200px);
+  opacity: 0.55; pointer-events: none; z-index: 0;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 55%, transparent 100%);
+          mask-image: linear-gradient(to bottom, #000 0%, #000 55%, transparent 100%);
+}
+.landing-page .hero-inner { z-index: 1; position: relative; }
+.landing-page .eyebrow {
+  display: inline-block; font-size: 12px; letter-spacing: 1.6px; text-transform: uppercase;
+  color: var(--lp-teal-bright); background: rgba(43,163,199,0.1);
+  padding: 7px 16px; border-radius: 20px; margin-bottom: 26px;
+}
+.landing-page h1 { font-size: clamp(32px, 5vw, 48px); font-weight: 500; line-height: 1.12; margin-bottom: 20px; }
+.landing-page .lede { font-size: 17px; color: var(--lp-muted); max-width: 520px; margin: 0 auto 34px; }
+.landing-page .cta-row { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+.landing-page .btn {
+  font-size: 15px; font-weight: 500; padding: 13px 28px; border-radius: 10px;
+  display: inline-flex; align-items: center; gap: 8px; transition: transform .1s, background .15s;
+}
+.landing-page .btn:active { transform: scale(0.98); }
+.landing-page .btn-primary { background: var(--lp-teal); color: #0d1417; }
+.landing-page .btn-primary:hover { background: #37b4d9; }
+.landing-page .btn-ghost { background: transparent; color: var(--lp-ink-2); border: 0.5px solid rgba(255,255,255,0.15); }
+.landing-page .btn-ghost:hover { background: var(--lp-panel); }
+
+/* Features */
+.landing-page section.features { padding: 20px 32px 80px; flex: 1 0 auto; }
+.landing-page footer { flex-shrink: 0; }
+.landing-page .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.landing-page .card {
+  background: var(--lp-panel); border: 0.5px solid var(--lp-hair); border-radius: 14px; padding: 24px;
+  transition: border-color .15s, transform .15s;
+}
+.landing-page .card:hover { border-color: rgba(43,163,199,0.4); transform: translateY(-2px); }
+.landing-page .card .icon {
+  width: 40px; height: 40px; border-radius: 10px; background: rgba(43,163,199,0.12);
+  display: flex; align-items: center; justify-content: center; margin-bottom: 16px;
+}
+.landing-page .card .icon svg { width: 22px; height: 22px; stroke: var(--lp-teal); fill: none; stroke-width: 1.8; }
+.landing-page .card h3 { font-size: 17px; font-weight: 500; color: #e2e8ec; margin-bottom: 8px; }
+.landing-page .card p { font-size: 14px; color: var(--lp-muted-2); }
+
+/* Footer */
+.landing-page footer {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;
+  padding: 20px 32px; border-top: 0.5px solid var(--lp-hair); background: var(--lp-panel);
+  font-size: 13px; color: #7a848c;
+}
+.landing-page footer .stack { display: inline-flex; align-items: center; gap: 8px; }
+.landing-page footer .teal { color: var(--lp-teal); }
+
+@media (max-width: 560px) {
+  .landing-page nav { padding: 14px 20px; }
+  .landing-page section.features { padding: 20px 20px 60px; }
+  .landing-page footer { padding: 18px 20px; }
+}
+
+/* Animated background */
+@keyframes lp-pan {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-1080px); }
+}
+@keyframes lp-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.landing-page .starfield .sky-rotate     { transform-origin: 540px 170px; animation: lp-spin 220s linear infinite; }
+.landing-page .starfield .sky-pan        { animation: lp-pan 90s linear infinite; }
+.landing-page .starfield .backset-rotate { transform-origin: 540px 170px; animation: lp-spin 440s linear infinite; }
+.landing-page .starfield .backset-pan    { animation: lp-pan 140s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .landing-page .starfield .sky-rotate, .landing-page .starfield .sky-pan,
+  .landing-page .starfield .backset-rotate, .landing-page .starfield .backset-pan { animation: none; }
+}
