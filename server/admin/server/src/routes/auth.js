@@ -6,6 +6,9 @@ import {
   hashPassword, verifyPassword, signToken, requireAuth,
   COOKIE_NAME, cookieOptions,
 } from '../lib/auth.js';
+import {
+  createInvite, listInvites, revokeInvite, redeemInvite,
+} from '../lib/invites.js';
 
 const router = safeRouter(express.Router());
 
@@ -41,6 +44,36 @@ router.post('/logout', (req, res) => {
 
 router.get('/me', requireAuth, (req, res) => {
   res.json({ username: req.user.username });
+});
+
+// --- self-service registration via one-time invite code -------------------
+// PUBLIC (a new user has no session yet), rate-limited like login.
+router.post('/register', loginLimiter, async (req, res) => {
+  try {
+    const { code, username, password } = req.body || {};
+    const result = await redeemInvite({ code, username, password });
+    res.status(201).json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// Admin-only: generate / list / revoke invite codes.
+router.post('/invites', requireAuth, async (req, res) => {
+  const result = await createInvite(req.user.username);
+  res.status(201).json(result); // { code, expires_at } — raw code shown once
+});
+
+router.get('/invites', requireAuth, async (req, res) => {
+  res.json(await listInvites());
+});
+
+router.delete('/invites/:id', requireAuth, async (req, res) => {
+  try {
+    res.json(await revokeInvite(Number(req.params.id)));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
 });
 
 // --- admin user management (any signed-in admin can add another) ----------
