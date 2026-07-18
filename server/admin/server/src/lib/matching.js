@@ -111,6 +111,53 @@ class UF {
 }
 
 // --- detectors -------------------------------------------------------------
+// Normalize an engine value for comparison. Blank/unknown -> '' (can't gate on).
+function normEngine(e) {
+  const v = (e || '').toString().trim().toLowerCase();
+  if (!v || v === 'unknown' || v === 'n/a' || v === 'none' || v === '-') return '';
+  return v;
+}
+
+// Two rows are engine-compatible for EXACT matching if at least one lacks an
+// engine, OR both engines are equal. If both have engines and they differ,
+// they are NOT an exact duplicate (requirement: gate exact matches on engine).
+// (Grouping is done in partitionByEngine below.)
+
+// Within a set of rows sharing an id_name, split into engine-consistent groups.
+//
+// Rules:
+//  - Rows with a KNOWN engine group strictly by that engine. Two different
+//    known engines are never bridged (a Ren'Py "Foo" and an RPGM "Foo" are two
+//    separate games, not an exact duplicate).
+//  - A row with NO engine can only join a known-engine group when there is
+//    exactly ONE known engine in the whole set — then it's unambiguous. If the
+//    set contains two or more conflicting engines, an engineless row can't be
+//    confidently assigned to either side, so it is left out of the exact match.
+//  - If NO row in the set has an engine at all, they all group together as
+//    before (engine simply can't gate them).
+function partitionByEngine(members) {
+  const known = new Map();     // engine -> [rows]
+  const engineless = [];
+  for (const m of members) {
+    const e = normEngine(m.engine);
+    if (e) { if (!known.has(e)) known.set(e, []); known.get(e).push(m); }
+    else engineless.push(m);
+  }
+
+  // No known engines anywhere: keep them all together.
+  if (known.size === 0) return [engineless];
+
+  // Exactly one known engine: engineless rows join it unambiguously.
+  if (known.size === 1) {
+    const [rows] = known.values();
+    return [[...rows, ...engineless]];
+  }
+
+  // Two or more conflicting engines: each engine is its own group, and
+  // engineless rows are ambiguous -> dropped from exact matching.
+  return [...known.values()];
+}
+
 export function findExactGroups(rows) {
   const by = new Map();
   for (const r of rows) {
@@ -122,8 +169,12 @@ export function findExactGroups(rows) {
   }
   const groups = [];
   for (const [key, members] of by) {
-    const ids = new Set(members.map((m) => m.atlas_id));
-    if (ids.size > 1) groups.push({ key, members });
+    // Same id_name is necessary but no longer sufficient: split on engine so a
+    // Ren'Py "Foo" and an RPGM "Foo" don't merge as an exact duplicate.
+    for (const sub of partitionByEngine(members)) {
+      const ids = new Set(sub.map((m) => m.atlas_id));
+      if (ids.size > 1) groups.push({ key, members: sub });
+    }
   }
   return groups;
 }
