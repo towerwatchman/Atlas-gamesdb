@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import { Notice, Spinner } from '../components/ui.jsx';
+import { ChangelogList } from '../components/changelog.jsx';
 
 function Stat({ label, value, sub, accent, onClick }) {
   const n = value == null ? '—' : value.toLocaleString();
@@ -16,11 +17,13 @@ function Stat({ label, value, sub, accent, onClick }) {
 
 export default function Home({ user }) {
   const [data, setData] = useState(null);
+  const [recent, setRecent] = useState(null);
   const [err, setErr] = useState('');
   const navigate = useNavigate();
 
   useEffect(() => {
     api.get('/api/stats').then(setData).catch((e) => setErr(e.message));
+    api.get('/api/changelog?limit=8').then((d) => setRecent(d.entries)).catch(() => setRecent([]));
   }, []);
 
   return (
@@ -57,6 +60,16 @@ export default function Home({ user }) {
                 {data.queue ? <>, with <strong>{data.queue.toLocaleString()}</strong> LewdCorner threads still in the review queue</> : null}.</>
               ) : 'Some counts are unavailable — check that the source tables exist.'}
             </p>
+          </div>
+
+          <div className="panel panel-pad" style={{ marginTop: 18 }}>
+            <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <h3 style={{ fontSize: 15, margin: 0 }}>Recent activity</h3>
+              <button className="btn btn-sm" onClick={() => navigate('/changelog')}>View all</button>
+            </div>
+            {recent === null
+              ? <Spinner label="Loading activity…" />
+              : <ChangelogList entries={recent} compact onOpenGame={(id) => navigate(`/atlas?focus=${id}`)} />}
           </div>
         </>
       )}

@@ -2,10 +2,10 @@ import express from 'express';
 import { safeRouter } from '../lib/safeRouter.js';
 import {
   getQueue, getQueueItem, candidatesFor,
-  linkQueueItem, newFromQueueItem, dismissQueueItem,
+  linkQueueItem, newFromQueueItem, dismissQueueItem, deferQueueItem,
 } from '../lib/queue.js';
 import { getAtlasRowsByIds } from '../lib/candidates.js';
-import { getSourceOwners, getSourceIds } from '../lib/merge.js';
+import { getSourceOwners, getSourceIds, getSourceLinks } from '../lib/merge.js';
 
 const router = safeRouter(express.Router());
 
@@ -28,6 +28,7 @@ router.get('/:lcId', async (req, res) => {
       ...r,
       _owners: await getSourceOwners(r.atlas_id),
       _sources: await getSourceIds(r.atlas_id),
+      _links: await getSourceLinks(r.atlas_id),
     });
   }
   // preserve candidate ordering
@@ -46,6 +47,12 @@ router.post('/:lcId/link', async (req, res) => {
 router.post('/:lcId/new', async (req, res) => {
   try {
     res.json(await newFromQueueItem(Number(req.params.lcId), req.user.username));
+  } catch (err) { res.status(err.status || 500).json({ error: err.message }); }
+});
+
+router.post('/:lcId/defer', async (req, res) => {
+  try {
+    res.json(await deferQueueItem(Number(req.params.lcId), req.user.username));
   } catch (err) { res.status(err.status || 500).json({ error: err.message }); }
 });
 

@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { api, fmtTime } from '../lib/api.js';
-import { Notice, Modal, Spinner } from '../components/ui.jsx';
+import { Notice, Modal, Spinner, Highlight, SourceUrlLink, SourceLinkList } from '../components/ui.jsx';
 
 function ResolveModal({ lcId, onClose, onDone }) {
   const [data, setData] = useState(null);
@@ -25,6 +25,8 @@ function ResolveModal({ lcId, onClose, onDone }) {
       footer={data && (
         <>
           <button className="btn" onClick={onClose} disabled={busy}>Cancel</button>
+          <button className="btn" disabled={busy} title="Move to the bottom of the queue for now"
+            onClick={() => act(() => api.post(`/api/queue/${lcId}/defer`), 'Sent to bottom')}>Send to bottom</button>
           <button className="btn btn-danger" disabled={busy}
             onClick={() => act(() => api.post(`/api/queue/${lcId}/dismiss`), 'Dismissed')}>Dismiss</button>
           <button className="btn" disabled={busy}
@@ -45,7 +47,7 @@ function ResolveModal({ lcId, onClose, onDone }) {
               <span className="k">creator</span><span>{item.creator || '—'}</span>
               <span className="k">version</span><span>{item.version || '—'}</span>
               <span className="k">match</span><span><span className={`badge badge-${item.match_kind === 'fuzzy' ? 'fuzzy' : 'exact'}`}>{item.match_kind}</span></span>
-              <span className="k">url</span><span className="mono" style={{ wordBreak: 'break-all' }}>{item.site_url || '—'}</span>
+              <span className="k">url</span><span><SourceUrlLink url={item.site_url} /></span>
             </div>
           </div>
 
@@ -59,17 +61,20 @@ function ResolveModal({ lcId, onClose, onDone }) {
               <div className="cand-top">
                 <div className="row" style={{ gap: 8 }}>
                   <input type="radio" name="cand" style={{ width: 'auto' }} checked={chosen === c.atlas_id} onChange={() => setChosen(c.atlas_id)} />
-                  <span className="cand-title">#{c.atlas_id} · {c.title}</span>
+                  <span className="cand-title">#{c.atlas_id} · <Highlight text={c.title} reference={item.title} /></span>
                 </div>
                 <span>
-                  {c._owners.length
-                    ? c._owners.map((o) => <span key={o} className="badge badge-muted" style={{ marginLeft: 4 }}>{o}</span>)
-                    : <span className="orphan">orphan</span>}
+                  {c._links && c._links.length
+                    ? <SourceLinkList links={c._links} />
+                    : c._owners.length
+                      ? c._owners.map((o) => <span key={o} className="badge badge-muted" style={{ marginLeft: 4 }}>{o}</span>)
+                      : <span className="orphan">orphan</span>}
                 </span>
               </div>
               <div className="kv">
-                <span className="k">creator</span><span>{c.creator || '—'}</span>
-                <span className="k">version</span><span>{c.version || '—'}</span>
+                <span className="k">creator</span><span><Highlight text={c.creator || '—'} reference={item.creator} /></span>
+                <span className="k">version</span><span><Highlight text={c.version || '—'} reference={item.version} /></span>
+                <span className="k">engine</span><span>{c.engine || '—'}</span>
                 <span className="k">id_name</span><span className="mono">{c.id_name}</span>
               </div>
             </label>
@@ -96,6 +101,15 @@ export default function Queue() {
   }, [kind]);
 
   useEffect(() => { load(); }, [load]);
+
+  async function defer(lcId) {
+    setErr(''); setOk('');
+    try {
+      await api.post(`/api/queue/${lcId}/defer`);
+      setOk('Sent to bottom.');
+      load();
+    } catch (e) { setErr(e.message); }
+  }
 
   return (
     <>
@@ -127,14 +141,23 @@ export default function Queue() {
             </thead>
             <tbody>
               {data.items.map((it) => (
-                <tr key={it.lc_id}>
+                <tr key={it.lc_id} className={it.deferred_at ? 'row-deferred' : undefined}>
                   <td className="mono">{it.lc_id}</td>
-                  <td className="wrap" style={{ minWidth: 200 }}>{it.title}</td>
+                  <td className="wrap" style={{ minWidth: 200 }}>
+                    {it.title}
+                    {it.deferred_at ? <span className="badge badge-muted" style={{ marginLeft: 8 }}>deferred</span> : null}
+                  </td>
                   <td>{it.creator || <span className="hint">—</span>}</td>
                   <td>{it.version || <span className="hint">—</span>}</td>
                   <td><span className={`badge badge-${it.match_kind === 'fuzzy' ? 'fuzzy' : 'exact'}`}>{it.match_kind}</span></td>
                   <td className="mono">{fmtTime(it.first_seen)}</td>
-                  <td><button className="btn btn-sm btn-primary" onClick={() => setResolving(it.lc_id)}>Resolve</button></td>
+                  <td>
+                    <div className="row" style={{ gap: 6, justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
+                      <button className="btn btn-sm" title="Move to the bottom of the queue"
+                        onClick={() => defer(it.lc_id)}>Send to bottom</button>
+                      <button className="btn btn-sm btn-primary" onClick={() => setResolving(it.lc_id)}>Resolve</button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>

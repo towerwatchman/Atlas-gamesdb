@@ -4,8 +4,9 @@ import rateLimit from 'express-rate-limit';
 import { q, q1, write } from '../lib/db.js';
 import {
   hashPassword, verifyPassword, signToken, requireAuth,
-  COOKIE_NAME, cookieOptions,
+  verifyToken, COOKIE_NAME, cookieOptions,
 } from '../lib/auth.js';
+import { logAudit } from '../lib/atlas.js';
 import {
   createInvite, listInvites, revokeInvite, redeemInvite,
 } from '../lib/invites.js';
@@ -33,11 +34,23 @@ router.post('/login', loginLimiter, async (req, res) => {
   if (!ok) return res.status(401).json({ error: 'Wrong username or password.' });
 
   await write('UPDATE admin_users SET last_login = ? WHERE user_id = ?', [now(), user.user_id]);
+  try {
+    await logAudit({
+      atlasId: null, field: 'auth.login', oldValue: null,
+      newValue: req.ip || null, user: user.username,
+    });
+  } catch { /* never block login on audit failure */ }
   res.cookie(COOKIE_NAME, signToken(user), cookieOptions());
   res.json({ username: user.username });
 });
 
-router.post('/logout', (req, res) => {
+router.post('/logout', async (req, res) => {
+  const payload = req.cookies?.[COOKIE_NAME] && verifyToken(req.cookies[COOKIE_NAME]);
+  if (payload?.username) {
+    try {
+      await logAudit({ atlasId: null, field: 'auth.logout', oldValue: null, newValue: null, user: payload.username });
+    } catch { /* ignore */ }
+  }
   res.clearCookie(COOKIE_NAME, { ...cookieOptions(), maxAge: undefined });
   res.json({ ok: true });
 });
@@ -98,6 +111,9 @@ router.post('/users', requireAuth, async (req, res) => {
   await write(
     'INSERT INTO admin_users (username, password_hash, created_at) VALUES (?, ?, ?)',
     [username, hash, now()]);
+  try {
+    await logAudit({ atlasId: null, field: 'user.add', oldValue: null, newValue: username, user: req.user.username });
+  } catch { /* ignore */ }
   res.status(201).json({ username });
 });
 
@@ -113,6 +129,9 @@ router.delete('/users/:id', requireAuth, async (req, res) => {
     return res.status(400).json({ error: 'You cannot remove your own account while signed in.' });
   }
   await write('DELETE FROM admin_users WHERE user_id = ?', [id]);
+  try {
+    await logAudit({ atlasId: null, field: 'user.remove', oldValue: target.username, newValue: null, user: req.user.username });
+  } catch { /* ignore */ }
   res.json({ ok: true });
 });
 

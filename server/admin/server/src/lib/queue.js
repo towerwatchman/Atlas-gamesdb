@@ -11,13 +11,26 @@ import { q, q1, tx } from './db.js';
 import { findFuzzyAtlasCandidates, findAtlasIdsByIdName } from './candidates.js';
 import { logAudit, EDITABLE_ATLAS_COLUMNS } from './atlas.js';
 
+// Deferred items (deferred_at NOT NULL) sink below fresh ones; among deferred
+// rows the most-recently-deferred goes last, so repeatedly deferring cycles
+// the list without ever dropping an item (requirement 6).
+const QUEUE_ORDER = `ORDER BY (deferred_at IS NOT NULL), deferred_at, first_seen, lc_id`;
+
 export async function getQueue(kind) {
   if (kind) {
     return q(
-      `SELECT * FROM lc_review_queue WHERE match_kind = ?
-       ORDER BY first_seen, lc_id`, [kind]);
+      `SELECT * FROM lc_review_queue WHERE match_kind = ? ${QUEUE_ORDER}`, [kind]);
   }
-  return q('SELECT * FROM lc_review_queue ORDER BY first_seen, lc_id');
+  return q(`SELECT * FROM lc_review_queue ${QUEUE_ORDER}`);
+}
+
+/** Send a queue item to the bottom of the list (soft, reversible). */
+export async function deferQueueItem(lcId, user) {
+  const item = await getQueueItem(lcId);
+  if (!item) throw Object.assign(new Error('Queue item not found.'), { status: 404 });
+  const ts = Math.floor(Date.now() / 1000);
+  await q('UPDATE lc_review_queue SET deferred_at = ? WHERE lc_id = ?', [ts, lcId]);
+  return { deferred: true, lc_id: Number(lcId), deferred_at: ts };
 }
 
 export async function getQueueItem(lcId) {

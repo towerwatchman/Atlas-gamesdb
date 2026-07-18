@@ -1,4 +1,59 @@
 import React from 'react';
+import { highlightSegments } from '../lib/highlight.js';
+
+// Renders `text` with the parts that overlap `reference` wrapped in <mark>.
+// Purely local (see lib/highlight.js). Used in the review queue so an admin can
+// eyeball which candidate best matches the queued item (requirement 2).
+export function Highlight({ text, reference }) {
+  const segs = highlightSegments(text, reference);
+  return (
+    <>
+      {segs.map((s, i) => (s.match
+        ? <mark key={i} className="hl">{s.text}</mark>
+        : <React.Fragment key={i}>{s.text}</React.Fragment>))}
+    </>
+  );
+}
+
+// A plain clickable source/thread URL. Truncates visually via CSS but the full
+// url is the href + title. stopPropagation so it doesn't trigger a row click.
+export function SourceUrlLink({ url, children }) {
+  if (!url) return <span className="hint">—</span>;
+  return (
+    <a href={url} target="_blank" rel="noreferrer" title={url}
+      onClick={(e) => e.stopPropagation()} style={{ wordBreak: 'break-all' }}>
+      {children || url} ↗
+    </a>
+  );
+}
+
+// Renders admin-attached external links (Steam/GOG/Itch/custom). Each becomes a
+// clickable badge when it has a url; otherwise it shows the id as plain text.
+const EXT_LABEL = { steam: 'Steam', gog: 'GOG', itch: 'itch.io', custom: 'Link' };
+export function ExternalLinkBadges({ links, onRemove }) {
+  if (!links || !links.length) return null;
+  const stop = (e) => e.stopPropagation();
+  return (
+    <span className="row" style={{ gap: 6 }}>
+      {links.map((l) => {
+        const name = l.kind === 'custom' ? (l.label || 'Link') : (EXT_LABEL[l.kind] || l.kind);
+        const shown = l.ext_id ? `${name} ${l.ext_id}` : name;
+        const inner = l.url
+          ? <a className="badge badge-ext" href={l.url} target="_blank" rel="noreferrer" onClick={stop} title={l.url}>{shown} ↗</a>
+          : <span className="badge badge-ext" title={l.ext_id || ''}>{shown}</span>;
+        return (
+          <span key={l.link_id} className="ext-chip">
+            {inner}
+            {onRemove && (
+              <button className="ext-x" title="Remove link"
+                onClick={(e) => { stop(e); onRemove(l); }} aria-label="Remove link">×</button>
+            )}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
 
 // Renders f95 / lc source ids. When a site_url is available the id becomes a
 // clickable link that opens the source thread in a new tab. `stopPropagation`

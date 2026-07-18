@@ -14,6 +14,7 @@ import { env } from './env.js';
 export const ALLOWED_TABLES = new Set([
   'atlas', 'f95_zone', 'updates', 'dlsite', 'dlsite_circle',
   'lewdcorner', 'sxs', 'lc_review_queue', 'atlas_audit', 'admin_users',
+  'atlas_manual_links',
 ]);
 
 export function checkTable(table) {

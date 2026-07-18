@@ -1,6 +1,75 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api, fmtTime } from '../lib/api.js';
-import { SourceBadges, SourceLinkList, Notice, Modal, Spinner } from '../components/ui.jsx';
+import { SourceBadges, SourceLinkList, ExternalLinkBadges, Notice, Modal, Spinner } from '../components/ui.jsx';
+
+const EXT_KINDS = [
+  { value: 'steam', label: 'Steam' },
+  { value: 'gog', label: 'GOG' },
+  { value: 'itch', label: 'itch.io' },
+  { value: 'custom', label: 'Custom' },
+];
+
+// External-links editor embedded in the game edit modal. These are admin-only
+// links (Steam/GOG/Itch/custom) stored separately from scraped data, so a
+// re-scrape never overwrites them.
+function ExternalLinksEditor({ atlasId, links, setLinks, onError }) {
+  const [kind, setKind] = useState('steam');
+  const [label, setLabel] = useState('');
+  const [extId, setExtId] = useState('');
+  const [url, setUrl] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function add() {
+    onError('');
+    if (!extId.trim() && !url.trim()) { onError('Provide an ID, a URL, or both.'); return; }
+    setBusy(true);
+    try {
+      const created = await api.post(`/api/atlas/${atlasId}/manual-links`, {
+        kind, label: label.trim() || undefined, extId: extId.trim() || undefined, url: url.trim() || undefined,
+      });
+      setLinks([created, ...links]);
+      setLabel(''); setExtId(''); setUrl('');
+    } catch (e) { onError(e.message); } finally { setBusy(false); }
+  }
+
+  async function remove(l) {
+    onError('');
+    try {
+      await api.del(`/api/atlas/${atlasId}/manual-links/${l.link_id}`);
+      setLinks(links.filter((x) => x.link_id !== l.link_id));
+    } catch (e) { onError(e.message); }
+  }
+
+  return (
+    <div className="panel panel-pad" style={{ marginTop: 12, background: 'var(--panel-2)' }}>
+      <h3 style={{ fontSize: 14, margin: '0 0 4px', color: 'var(--muted)' }}>External links</h3>
+      <p className="hint" style={{ marginBottom: 10 }}>
+        Steam, GOG, itch.io or custom links. Stored separately from scraped data, so they survive re-scrapes.
+      </p>
+
+      {links.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <ExternalLinkBadges links={links} onRemove={remove} />
+        </div>
+      )}
+
+      <div className="ext-add">
+        <select style={{ width: 'auto' }} value={kind} onChange={(e) => setKind(e.target.value)}>
+          {EXT_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
+        </select>
+        {kind === 'custom' && (
+          <input placeholder="Label (e.g. Patreon)" value={label} onChange={(e) => setLabel(e.target.value)} style={{ flex: '1 1 130px' }} />
+        )}
+        <input placeholder="ID (optional)" value={extId} onChange={(e) => setExtId(e.target.value)} style={{ flex: '1 1 110px' }} />
+        <input placeholder="https:// URL (optional)" value={url} onChange={(e) => setUrl(e.target.value)} style={{ flex: '2 1 200px' }} />
+        <button className="btn btn-sm btn-primary" onClick={add} disabled={busy || (!extId.trim() && !url.trim())}>
+          {busy ? 'Adding…' : 'Add link'}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 // Fields shown as a wide textarea rather than a single-line input.
 const LONG_FIELDS = new Set(['overview', 'tags', 'genre', 'previews', 'translations']);
@@ -10,6 +79,7 @@ function EditModal({ atlasId, onClose, onSaved }) {
   const [cols, setCols] = useState([]);
   const [draft, setDraft] = useState({});
   const [audit, setAudit] = useState([]);
+  const [manualLinks, setManualLinks] = useState([]);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -22,6 +92,7 @@ function EditModal({ atlasId, onClose, onSaved }) {
     ]).then(([r, c, a]) => {
       if (!live) return;
       setRow(r); setCols(c); setAudit(a);
+      setManualLinks(r._manual_links || []);
       const d = {};
       c.forEach((col) => { d[col] = r[col] ?? ''; });
       setDraft(d);
@@ -85,7 +156,14 @@ function EditModal({ atlasId, onClose, onSaved }) {
             ))}
           </div>
 
-          <h3 style={{ fontSize: 14, margin: '10px 0 8px', color: 'var(--muted)' }}>Edit history</h3>
+          <ExternalLinksEditor
+            atlasId={atlasId}
+            links={manualLinks}
+            setLinks={setManualLinks}
+            onError={setErr}
+          />
+
+          <h3 style={{ fontSize: 14, margin: '14px 0 8px', color: 'var(--muted)' }}>Edit history</h3>
           {audit.length === 0 ? (
             <p className="hint">No edits recorded for this row yet.</p>
           ) : (
@@ -120,7 +198,18 @@ export default function AtlasList() {
   const [editing, setEditing] = useState(null);
   const [ok, setOk] = useState('');
   const [err, setErr] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
   const limit = 50;
+
+  // Deep-link: /atlas?focus=<id> opens that game's editor (used by the changelog).
+  useEffect(() => {
+    const focus = searchParams.get('focus');
+    if (focus) {
+      setEditing(Number(focus));
+      searchParams.delete('focus');
+      setSearchParams(searchParams, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
 
   const load = useCallback(async (off = 0) => {
     setErr('');

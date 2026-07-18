@@ -6,6 +6,9 @@ import {
   EDITABLE_ATLAS_COLUMNS,
 } from '../lib/atlas.js';
 import { getSourceIds, getSourceLinks } from '../lib/merge.js';
+import {
+  getManualLinks, addManualLink, removeManualLink, MANUAL_LINK_KINDS,
+} from '../lib/manualLinks.js';
 
 const router = safeRouter(express.Router());
 
@@ -59,7 +62,36 @@ router.get('/:id', async (req, res) => {
   if (!row) return res.status(404).json({ error: 'No atlas row with that id.' });
   const sources = await getSourceIds(Number(req.params.id));
   const links = await getSourceLinks(Number(req.params.id));
-  res.json({ ...row, _sources: sources, _links: links });
+  const manualLinks = await getManualLinks(Number(req.params.id));
+  res.json({ ...row, _sources: sources, _links: links, _manual_links: manualLinks });
+});
+
+// --- manual external links (Steam/GOG/Itch/custom), scraper-safe -----------
+router.get('/:id/manual-links', async (req, res) => {
+  res.json(await getManualLinks(Number(req.params.id)));
+});
+
+router.get('/meta/manual-link-kinds', (req, res) => {
+  res.json(MANUAL_LINK_KINDS);
+});
+
+router.post('/:id/manual-links', async (req, res) => {
+  try {
+    const { kind, label, extId, url } = req.body || {};
+    const created = await addManualLink(Number(req.params.id), { kind, label, extId, url }, req.user.username);
+    res.json(created);
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+router.delete('/:id/manual-links/:linkId', async (req, res) => {
+  try {
+    const result = await removeManualLink(Number(req.params.id), Number(req.params.linkId), req.user.username);
+    res.json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
 });
 
 router.get('/:id/audit', async (req, res) => {

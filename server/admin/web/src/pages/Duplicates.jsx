@@ -25,24 +25,70 @@ function OrphanPrompt({ atlasId, onKeep, onDelete, busy }) {
   );
 }
 
-// Relink/float a single source row, with candidate lookup for linking.
-function RelinkModal({ link, onClose, onDone }) {
+// Relink/float a single source row. `fromAtlasId` is the atlas row this source
+// currently sits on, shown in the confirm step's #from → #to arrow.
+// Every move now goes through a confirmation screen (requirement 5) so the
+// admin sees exactly where the source is headed before it happens.
+function RelinkModal({ link, fromAtlasId, onClose, onDone }) {
   const [target, setTarget] = useState('');
+  const [pending, setPending] = useState(null); // { action, atlasId } awaiting confirm
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const label = link.source === 'f95_zone' ? 'F95zone' : link.source === 'lewdcorner' ? 'LewdCorner' : link.source;
+  const shortSrc = link.source === 'f95_zone' ? 'f95' : link.source === 'lewdcorner' ? 'lc' : link.source;
 
-  async function act(action) {
+  async function commit() {
+    if (!pending) return;
     setErr(''); setBusy(true);
     try {
       const res = await api.post('/api/duplicates/relink-source', {
-        table: link.source, sourceId: link.id, action,
-        atlasId: action === 'link' ? Number(target) : undefined,
+        table: link.source, sourceId: link.id, action: pending.action,
+        atlasId: pending.action === 'link' ? Number(pending.atlasId) : undefined,
       });
-      onDone(res, action);
+      onDone(res, pending.action);
     } catch (e) { setErr(e.message); setBusy(false); }
   }
 
+  // ---- confirmation view ----
+  if (pending) {
+    const isFloat = pending.action === 'float';
+    return (
+      <Modal
+        title="Confirm move"
+        onClose={() => !busy && setPending(null)}
+        footer={(
+          <>
+            <button className="btn" onClick={() => setPending(null)} disabled={busy}>Back</button>
+            <button className={`btn ${isFloat ? '' : 'btn-primary'}`} onClick={commit} disabled={busy}>
+              {busy ? 'Moving…' : 'Yes, move it'}
+            </button>
+          </>
+        )}
+      >
+        <Notice kind="err" onClose={() => setErr('')}>{err}</Notice>
+        <p className="hint" style={{ marginBottom: 14 }}>
+          Move <span className="badge badge-f95" style={{ margin: '0 2px' }}>{shortSrc} {link.id}</span>
+          {isFloat
+            ? ' so it is linked to no atlas game?'
+            : ' to a different atlas game?'}
+        </p>
+        <div className="move-flow">
+          <span className="move-node">#{fromAtlasId ?? '—'}</span>
+          <span className="move-arrow">→</span>
+          <span className={`move-node ${isFloat ? 'move-float' : 'move-target'}`}>
+            {isFloat ? 'floating' : `#${pending.atlasId}`}
+          </span>
+        </div>
+        <p className="hint" style={{ marginTop: 14 }}>
+          The source row itself is never deleted. {link.site_url && (
+            <a href={link.site_url} target="_blank" rel="noreferrer">Open the source thread ↗</a>
+          )}
+        </p>
+      </Modal>
+    );
+  }
+
+  // ---- picker view ----
   return (
     <Modal
       title={`Move ${label} source ${link.id}`}
@@ -50,11 +96,11 @@ function RelinkModal({ link, onClose, onDone }) {
       footer={(
         <>
           <button className="btn" onClick={onClose} disabled={busy}>Cancel</button>
-          <button className="btn" onClick={() => act('float')} disabled={busy} title="Unlink from any atlas game">
-            {busy ? '…' : 'Set floating'}
+          <button className="btn" onClick={() => setPending({ action: 'float' })} disabled={busy} title="Unlink from any atlas game">
+            Set floating
           </button>
-          <button className="btn btn-primary" onClick={() => act('link')} disabled={busy || !Number(target)}>
-            {busy ? '…' : 'Link to atlas id'}
+          <button className="btn btn-primary" onClick={() => setPending({ action: 'link', atlasId: Number(target) })} disabled={busy || !Number(target) || Number(target) === fromAtlasId}>
+            Continue
           </button>
         </>
       )}
@@ -67,9 +113,12 @@ function RelinkModal({ link, onClose, onDone }) {
         )}
       </p>
       <div className="field">
-        <label>Link to atlas id</label>
+        <label>Link to atlas id {fromAtlasId != null ? `(currently on #${fromAtlasId})` : ''}</label>
         <input inputMode="numeric" placeholder="e.g. 4821" value={target}
           onChange={(e) => setTarget(e.target.value.replace(/[^0-9]/g, ''))} />
+        {Number(target) === fromAtlasId && target !== '' && (
+          <span className="hint" style={{ color: 'var(--amber)' }}>That's the atlas it's already on.</span>
+        )}
       </div>
     </Modal>
   );
@@ -141,6 +190,7 @@ function MergeModal({ group, onClose, onDone, onRelinkDone }) {
               </div>
               <div className="kv">
                 <span className="k">creator</span><span>{r.creator || '—'}</span>
+                <span className="k">engine</span><span>{r.engine || '—'}</span>
                 <span className="k">version</span><span>{r.version || '—'}</span>
                 <span className="k">id_name</span><span className="mono">{r.id_name}</span>
                 <span className="k">sources</span><span><SourceLinkList links={r._links} /></span>
@@ -149,7 +199,7 @@ function MergeModal({ group, onClose, onDone, onRelinkDone }) {
                 <div className="row" style={{ marginTop: 8, gap: 6 }}>
                   {r._links.map((l) => (
                     <button key={`${l.source}-${l.id}`} className="btn btn-sm"
-                      onClick={() => setRelink(l)}>
+                      onClick={() => setRelink({ ...l, _fromAtlasId: r.atlas_id })}>
                       Move {l.source === 'f95_zone' ? 'f95' : 'lc'} {l.id}
                     </button>
                   ))}
@@ -163,6 +213,7 @@ function MergeModal({ group, onClose, onDone, onRelinkDone }) {
       {relink && (
         <RelinkModal
           link={relink}
+          fromAtlasId={relink._fromAtlasId}
           onClose={() => setRelink(null)}
           onDone={(res, action) => {
             setRelink(null);
@@ -277,13 +328,14 @@ export default function Duplicates() {
               </div>
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>atlas_id</th><th className="wrap">Title</th><th>Creator</th><th>Version</th><th>Sources</th></tr></thead>
+                  <thead><tr><th>atlas_id</th><th className="wrap">Title</th><th>Creator</th><th>Engine</th><th>Version</th><th>Sources</th></tr></thead>
                   <tbody>
                     {g.members.map((m) => (
                       <tr key={m.atlas_id}>
                         <td className="mono">{m.atlas_id}</td>
                         <td className="wrap">{m.title}</td>
                         <td>{m.creator || '—'}</td>
+                        <td>{m.engine || '—'}</td>
                         <td>{m.version || '—'}</td>
                         <td><SourceBadges row={m} /></td>
                       </tr>

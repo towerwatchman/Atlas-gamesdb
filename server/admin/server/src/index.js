@@ -24,6 +24,7 @@ import atlasRoutes from './routes/atlas.js';
 import duplicateRoutes from './routes/duplicates.js';
 import queueRoutes from './routes/queue.js';
 import statsRoutes from './routes/stats.js';
+import changelogRoutes from './routes/changelog.js';
 import updatesRoutes from './routes/updates.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -59,6 +60,7 @@ app.use('/admin/api/atlas', requireAuth, atlasRoutes);
 app.use('/admin/api/duplicates', requireAuth, duplicateRoutes);
 app.use('/admin/api/queue', requireAuth, queueRoutes);
 app.use('/admin/api/stats', requireAuth, statsRoutes);
+app.use('/admin/api/changelog', requireAuth, changelogRoutes);
 
 // --- Static React app + SPA fallback ---------------------------------------
 const publicDir = path.join(__dirname, '..', 'public');
