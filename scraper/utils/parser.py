@@ -20,7 +20,7 @@ class parser:
                 atlasRecord["status"] = item.replace("[", "").replace("]", "")
             else:  # Parse Game Name
                 strings = item.split("[")
-                atlasRecord["title"] = strings[0].replace("[", "").replace("]", "")
+                atlasRecord["title"] = strings[0].replace("[", "").replace("]", "").strip()
                 if len(strings) == 2:
                     tmp = re.sub(
                         r"[\W_]+",

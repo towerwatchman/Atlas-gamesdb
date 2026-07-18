@@ -176,7 +176,7 @@ class dlsite:
                         atlasRecord["creator"] == dlsiteRecord["circle_id"]
                     # print(atlasRecord["creator"])
                     dlsiteRecord["site_url"] = page[dtype + dlsite_id]["down_url"]
-                    atlasRecord["title"] = page[dtype + dlsite_id]["work_name"]
+                    atlasRecord["title"] = str(page[dtype + dlsite_id]["work_name"] or "").strip()
                     dlsiteRecord["banner_url"] = page[dtype + dlsite_id]["work_image"]
                     atlasRecord["version"] = "N/A"
                     atlasRecord["short_name"] = re.sub(
