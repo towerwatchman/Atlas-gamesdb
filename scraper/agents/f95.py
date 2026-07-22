@@ -493,10 +493,21 @@ class f95:
         # detail page instead -- the page's H1 title (with the trailing
         # [version]/[dev] brackets stripped) and the inline "Version:" label.
         if not atlas.get("title") and d.get("title"):
-            # Strip the trailing [version] [developer] brackets F95 appends
-            # to thread titles so the stored title is just the game name.
-            clean_title = re.sub(r"\s*\[[^\[\]]*\]\s*", " ", d["title"]).strip()
-            atlas["title"] = clean_title or d["title"].strip()
+            # The H1 is "<prefixes> <Game Name> [version] [developer]" --
+            # strip BOTH the leading prefix labels (VN, Ren'Py, Completed,
+            # etc., which the parser already lists in d["prefixes"]) and the
+            # trailing [..] brackets, so the stored title is just the game
+            # name. In the normal listing scrape this comes pre-cleaned from
+            # the feed; only the refresh path lands here.
+            raw = d["title"]
+            # remove trailing bracketed segments (version / developer)
+            no_brackets = re.sub(r"\s*\[[^\[\]]*\]\s*", " ", raw).strip()
+            # remove any leading prefix labels the parser identified
+            for pref in (d.get("prefixes") or []):
+                p = pref.strip()
+                if p and no_brackets.startswith(p):
+                    no_brackets = no_brackets[len(p):].lstrip()
+            atlas["title"] = no_brackets or raw.strip()
         if not atlas.get("version") and d.get("version"):
             atlas["version"] = str(d["version"]).strip()
         if not atlas.get("developer") and d.get("developer"):
