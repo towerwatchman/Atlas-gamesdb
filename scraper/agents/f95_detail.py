@@ -121,12 +121,39 @@ def _netloc(url):
     return urlparse(url).netloc.replace("www.", "")
 
 
+def _is_user_attachment(url):
+    """True for a real user-uploaded attachment, which always has the shape
+    attachments.f95zone.to/YYYY/MM/<numeric-id>_<name>. Dev cover images and
+    screenshots all live here. Distinguished from F95's own static site
+    chrome (favicons, /assets/ logos), which does NOT match this pattern.
+    """
+    if not url:
+        return False
+    return bool(re.search(
+        r"attachments\.f95zone\.to/\d{4}/\d{2}/(?:thumb/)?\d+_", url, re.I))
+
+
 def _is_generic_image(url):
-    """True for site chrome (favicon, /assets/ logos) that is never a cover."""
+    """True for site chrome (favicon, /assets/ logos, the stock forum banner)
+    that is never a cover.
+
+    IMPORTANT: the "f95zone_banner" name check must NOT reject real dev
+    uploads. Some developers literally name their cover image
+    "..._f95zone_banner.png" (e.g. Eternum:
+    /2023/10/3018543_f95zone_banner.png). Those are genuine user attachments
+    -- matching the dated /YYYY/MM/<id>_ attachment pattern -- and must be
+    kept. Only a bare "f95zone_banner" reference that is NOT a user
+    attachment (i.e. F95's own stock banner served from static/assets) counts
+    as generic chrome.
+    """
     if not url:
         return True
     u = url.lower()
-    return "favicon" in u or "/assets/" in u or "f95zone_banner" in u
+    if "favicon" in u or "/assets/" in u:
+        return True
+    if "f95zone_banner" in u and not _is_user_attachment(url):
+        return True
+    return False
 
 
 def _filename_from_url(url):
@@ -425,12 +452,14 @@ def parse_thread_detail(html):
     out["extras"] = extras
     out["translations"] = translations
 
-    # Screenshots: attachment images in the post (skip the generic banner).
+    # Screenshots: attachment images in the post (skip the stock forum
+    # banner, but NOT a real dev upload that merely happens to be named
+    # "..._f95zone_banner" -- see _is_generic_image).
     screens = []
     for a in body.find_all("a", href=True):
         href = a["href"]
         if "attachments.f95zone.to" in href and a.find("img"):
-            if "f95zone_banner" in href:
+            if "f95zone_banner" in href and not _is_user_attachment(href):
                 continue
             screens.append(href)
     out["screens"] = screens

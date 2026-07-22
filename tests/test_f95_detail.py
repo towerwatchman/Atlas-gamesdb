@@ -57,6 +57,13 @@ def test_logged_in_unlocks_everything():
     allitems = d["downloads"] + d["patches"] + d["extras"] + d["translations"]
     assert not any(x["url"].endswith((".jpg", ".png")) for x in allitems)
     assert len(d["screens"]) > 0
+    # cover_url must be the dev's header image even though the dev named it
+    # "..._f95zone_banner.png" -- a real user attachment, not stock chrome.
+    assert d["cover_url"] == (
+        "https://attachments.f95zone.to/2023/10/3018543_f95zone_banner.png"
+    )
+    # ...and that dev image must NOT also appear in the screenshots list.
+    assert not any("3018543_f95zone_banner" in s for s in d["screens"])
 
 
 def test_orphan_downloads_default_to_downloads():
