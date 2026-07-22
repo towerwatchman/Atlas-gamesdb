@@ -69,6 +69,30 @@ class query:
             """
         return query
 
+    def createF95RefreshQueueTable(type=None):
+        # Server-side work queue: the Node admin server enqueues an f95_id to
+        # be re-scraped; the Python cron worker drains it one item / ~10s.
+        # No FK to f95_zone -- a refresh can legitimately be queued for a
+        # thread id that isn't in the DB yet (e.g. a brand-new game an admin
+        # spotted). Status: pending -> processing -> done | error.
+        query = """
+                CREATE TABLE IF NOT EXISTS f95_refresh_queue (
+                    queue_id BIGINT NOT NULL PRIMARY KEY AUTO_INCREMENT,
+                    f95_id VARCHAR(32) NOT NULL,
+                    status VARCHAR(16) NOT NULL DEFAULT 'pending',
+                    priority INT NOT NULL DEFAULT 100,
+                    requested_by VARCHAR(64),
+                    requested_at BIGINT,
+                    started_at BIGINT,
+                    finished_at BIGINT,
+                    attempts INT NOT NULL DEFAULT 0,
+                    last_error TEXT,
+                    INDEX idx_f95_refresh_status (status, priority, requested_at),
+                    INDEX idx_f95_refresh_f95id (f95_id)
+                );
+            """
+        return query
+
     def deleteTable(table):
         query = "DROP TABLE IF EXISTS `" + table + "`;"
         return query

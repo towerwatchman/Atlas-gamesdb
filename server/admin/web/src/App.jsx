@@ -7,6 +7,7 @@ import Home from './pages/Home.jsx';
 import AtlasList from './pages/AtlasList.jsx';
 import Duplicates from './pages/Duplicates.jsx';
 import Queue from './pages/Queue.jsx';
+import F95Refresh from './pages/F95Refresh.jsx';
 import Admins from './pages/Admins.jsx';
 import Changelog from './pages/Changelog.jsx';
 import { Spinner } from './components/ui.jsx';
@@ -17,6 +18,7 @@ function TopBar({ user, onLogout }) {
     ['/admin/atlas', 'Games'],
     ['/admin/duplicates', 'Duplicates'],
     ['/admin/queue', 'Review queue'],
+    ['/admin/f95-refresh', 'F95 refresh'],
     ['/admin/changelog', 'Changelog'],
     ['/admin/admins', 'Admins'],
   ];
@@ -77,6 +79,7 @@ function AdminApp() {
           <Route path="/atlas" element={<AtlasList />} />
           <Route path="/duplicates" element={<Duplicates />} />
           <Route path="/queue" element={<Queue />} />
+          <Route path="/f95-refresh" element={<F95Refresh />} />
           <Route path="/changelog" element={<Changelog />} />
           <Route path="/admins" element={<Admins me={user} />} />
           <Route path="*" element={<Navigate to="/admin/home" replace />} />

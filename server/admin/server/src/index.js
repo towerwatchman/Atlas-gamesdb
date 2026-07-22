@@ -23,6 +23,7 @@ import authRoutes from './routes/auth.js';
 import atlasRoutes from './routes/atlas.js';
 import duplicateRoutes from './routes/duplicates.js';
 import queueRoutes from './routes/queue.js';
+import f95RefreshRoutes from './routes/f95Refresh.js';
 import statsRoutes from './routes/stats.js';
 import changelogRoutes from './routes/changelog.js';
 import updatesRoutes from './routes/updates.js';
@@ -59,6 +60,7 @@ app.use('/admin/api/auth', authRoutes);
 app.use('/admin/api/atlas', requireAuth, atlasRoutes);
 app.use('/admin/api/duplicates', requireAuth, duplicateRoutes);
 app.use('/admin/api/queue', requireAuth, queueRoutes);
+app.use('/admin/api/f95-refresh', requireAuth, f95RefreshRoutes);
 app.use('/admin/api/stats', requireAuth, statsRoutes);
 app.use('/admin/api/changelog', requireAuth, changelogRoutes);
 

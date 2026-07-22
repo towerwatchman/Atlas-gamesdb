@@ -27,7 +27,7 @@ from scraper.config import config
 # via scraped data flowing into table/column positions).
 ALLOWED_TABLES = {
     "atlas", "f95_zone", "updates", "dlsite", "dlsite_circle",
-    "lewdcorner", "sxs", "test", "lc_review_queue",
+    "lewdcorner", "sxs", "test", "lc_review_queue", "f95_refresh_queue",
 }
 
 _conn = None  # the one shared connection for this process; see _connect().
@@ -175,6 +175,7 @@ def CreateDatabase(db_type=None):
         query.createDlsiteTable(db_type),
         query.createLewdcornereTable(db_type),
         query.createLcReviewQueueTable(db_type),
+        query.createF95RefreshQueueTable(db_type),
         query.createSxsTable(db_type),
     ):
         _run(stmt, commit=True)
@@ -569,6 +570,114 @@ def dequeueLcReview(lc_id, db_type=None):
     """Remove a review row once it's been resolved (or dismissed)."""
     _run("DELETE FROM lc_review_queue WHERE lc_id = %s",
          (int(lc_id),), commit=True)
+
+
+# -------------------------------------------------- tag backfill (req #2)
+
+def getF95IdsMissingTags(db_type=None):
+    """Return the f95_id of every f95_zone row whose tags column is empty
+    (NULL or blank string). These are exactly the games that landed with
+    only listing-level data and never got their game/thread page tags -- the
+    backfill target for refresh_missing_tags.py. Ordered oldest-touched
+    first so a long backfill makes steady forward progress."""
+    rows = _run(
+        """
+        SELECT f95_id FROM f95_zone
+        WHERE f95_id IS NOT NULL
+          AND (tags IS NULL OR TRIM(tags) = '')
+        ORDER BY last_record_update IS NULL DESC, last_record_update, f95_id
+        """,
+        fetch="all",
+    ) or []
+    return [r[0] for r in rows]
+
+
+# -------------------------------------------------- f95 refresh queue (req #4)
+#
+# A tiny work queue the Node admin server writes into (enqueue an f95_id to
+# be re-scraped) and the Python cron worker (f95_refresh_worker.py) drains,
+# one item every ~10s. Status lifecycle:
+#   pending -> processing -> done | error
+# The worker claims exactly one pending row at a time (oldest first),
+# refreshes that game via f95.refresh_one, then marks it done/error. Kept
+# deliberately simple: one worker, so no locking beyond the status flip.
+
+def getNextPendingF95Refresh(db_type=None):
+    """Return the oldest still-pending refresh queue row as a dict, or None.
+    'Oldest' = lowest priority number first, then earliest requested_at, so
+    a caller can bump urgent items by giving them a lower priority."""
+    return _run(
+        """
+        SELECT * FROM f95_refresh_queue
+        WHERE status = 'pending'
+        ORDER BY priority, requested_at, queue_id
+        LIMIT 1
+        """,
+        fetch="one", dict_cursor=True,
+    )
+
+
+def markF95RefreshProcessing(queue_id, db_type=None):
+    """Flip a claimed row pending -> processing, stamping started_at. Returns
+    True if this call was the one that claimed it (affected a row), so even
+    if two workers ever raced, only one proceeds."""
+    now = int(time.time())
+    res = _run(
+        """
+        UPDATE f95_refresh_queue
+        SET status = 'processing', started_at = %s, attempts = attempts + 1
+        WHERE queue_id = %s AND status = 'pending'
+        """,
+        (now, queue_id), commit=True,
+    )
+    # _run returns lastrowid for commits, not rowcount, so re-read to confirm.
+    row = _run(
+        "SELECT status FROM f95_refresh_queue WHERE queue_id = %s LIMIT 1",
+        (queue_id,), fetch="one",
+    )
+    return bool(row and row[0] == "processing")
+
+
+def markF95RefreshResult(queue_id, ok, error=None, db_type=None):
+    """Mark a processed row done (ok=True) or error (ok=False, with an
+    optional message), stamping finished_at."""
+    now = int(time.time())
+    last_error = None if ok else (error or "unknown error")[:1000]
+    _run(
+        """
+        UPDATE f95_refresh_queue
+        SET status = %s, finished_at = %s, last_error = %s
+        WHERE queue_id = %s
+        """,
+        ("done" if ok else "error", now, last_error, queue_id),
+        commit=True,
+    )
+
+
+def enqueueF95Refresh(f95_id, requested_by="python", priority=100,
+                      db_type=None):
+    """Insert a pending refresh request for an f95_id (used by CLI helpers;
+    the Node server has its own insert). If an unfinished request for the
+    same f95_id already exists, this leaves it alone and returns its id."""
+    existing = _run(
+        """
+        SELECT queue_id FROM f95_refresh_queue
+        WHERE f95_id = %s AND status IN ('pending', 'processing')
+        ORDER BY queue_id LIMIT 1
+        """,
+        (str(f95_id),), fetch="one",
+    )
+    if existing:
+        return existing[0]
+    now = int(time.time())
+    return _run(
+        """
+        INSERT INTO f95_refresh_queue
+            (f95_id, status, priority, requested_by, requested_at, attempts)
+        VALUES (%s, 'pending', %s, %s, %s, 0)
+        """,
+        (str(f95_id), int(priority), requested_by, now), commit=True,
+    )
 
 
 def findDlsiteMaker(table, circle_id, db_type=None):

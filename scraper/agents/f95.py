@@ -57,6 +57,31 @@ from scraper.utils.db import (
     getAtlasIdByF95Id, insertAtlas, updateAtlasById,
 )
 
+
+def _detail_retries():
+    """How many times to retry a failed games/detail-page fetch for a NEW
+    game before giving up on this run. Tunable via F95_DETAIL_RETRIES.
+    Default 2 (i.e. up to 2 retries after the first attempt = 3 tries)."""
+    try:
+        return int(os.environ.get("F95_DETAIL_RETRIES", "2"))
+    except ValueError:
+        return 2
+
+
+def _empty_page_stop():
+    """Number of CONSECUTIVE fully-unchanged listing pages that must be seen
+    before the default incremental crawl stops early. The old behaviour was
+    to stop after the FIRST page with nothing to do -- but the feed is sorted
+    by latest ACTIVITY, not creation, so a brand-new game (little activity)
+    can sit several pages deep behind a page that happened to have zero
+    changes. Requiring N consecutive empty pages lets the walk push past
+    those gaps and still reach buried new games. Tunable via
+    F95_EMPTY_PAGE_STOP (default 3)."""
+    try:
+        return max(1, int(os.environ.get("F95_EMPTY_PAGE_STOP", "3")))
+    except ValueError:
+        return 3
+
 LATEST_DATA_URL = "https://f95zone.to/sam/latest_alpha/latest_data.php"
 
 
@@ -187,6 +212,12 @@ class f95:
         # definition; ts_only: the point is a complete catalog-wide sweep).
         allow_early_stop = not (full_detail or new_only or ts_only)
 
+        # Early stop now requires N CONSECUTIVE fully-unchanged pages rather
+        # than a single one (see _empty_page_stop). empty_streak counts them;
+        # any page that processes at least one item resets it to 0.
+        empty_streak = 0
+        empty_stop_after = _empty_page_stop()
+
         page_no = 1
         prev_page_ids = None
         while True:
@@ -253,9 +284,19 @@ class f95:
                 except Exception as ex:   # keep going on a single bad row
                     print("item error:", ex)
 
-            if allow_early_stop and processed == 0:
-                print("page fully up-to-date; stopping early")
-                break
+            if allow_early_stop:
+                if processed == 0:
+                    empty_streak += 1
+                    print(f"page fully up-to-date "
+                          f"({empty_streak}/{empty_stop_after} consecutive)")
+                    if empty_streak >= empty_stop_after:
+                        print(f"reached {empty_stop_after} consecutive "
+                              f"up-to-date pages; stopping early")
+                        break
+                else:
+                    # A page with real work resets the streak -- a buried new
+                    # game further down should still keep the crawl alive.
+                    empty_streak = 0
 
             if stop_after_this_page:
                 break
@@ -347,7 +388,22 @@ class f95:
             return False          # unchanged -> skip, no detail fetch, no delay
 
         print("detail:", f95rec["f95_id"], atlas.get("title"))
-        self._fetch_detail(f95rec["site_url"], atlas, f95rec)
+        # Crawl the actual game/thread page. For a BRAND-NEW game we retry a
+        # couple of times on failure (see _detail_retries), because writing a
+        # listing-only row here is exactly the "game in the feed but its
+        # detail fields never got scraped" bug -- the row lands with no
+        # tags/downloads/screens and nothing ever comes back to fill it. If
+        # every attempt fails for a new game we skip the write entirely and
+        # let a later run (or the refresh queue) pick it up cleanly.
+        ok = self._fetch_detail(
+            f95rec["site_url"], atlas, f95rec,
+            retries=(_detail_retries() if is_new else 0),
+        )
+        if is_new and not ok:
+            print("  new game detail fetch failed after retries; "
+                  "skipping write so it retries cleanly next run:",
+                  f95rec["f95_id"])
+            return False
 
         # `ts` from the feed is more accurate than F95's own "Thread Updated"
         # label scraped off the thread page (devs often forget to bump it) --
@@ -358,19 +414,102 @@ class f95:
         self._update_record(atlas, f95rec, db_type)
         return True
 
+    # ---- single-game refresh (manual rescan / queue worker / tag backfill) --
+    def refresh_one(self, f95_id, db_type):
+        """Full re-scrape of a SINGLE game by its f95 thread id: fetch the
+        game/thread page fresh and rewrite every field (listing-level fields
+        come from the detail page's own labels/widgets, everything else from
+        the page body). Shared by:
+          * refresh_game.py    (manual rescan by id, requirement 3)
+          * refresh_missing_tags.py (tag backfill, requirement 2)
+          * f95_refresh_worker.py   (the server refresh queue, requirement 4)
+
+        Returns True on a successful detail fetch + write, False otherwise.
+        Retries the page fetch (like a new game) so a transient blip doesn't
+        wipe a good row down to listing-only fields.
+        """
+        self.session.ensure_authenticated()
+        f95_id = str(f95_id)
+
+        atlas = gameRecord.atlasRecord()
+        f95rec = gameRecord.f95Record()
+        f95rec["f95_id"] = f95_id
+        f95rec["site_url"] = threadURL(f95_id)
+
+        print("refresh:", f95_id, threadURL(f95_id))
+        ok = self._fetch_detail(
+            f95rec["site_url"], atlas, f95rec, retries=_detail_retries(),
+        )
+        if not ok:
+            print("  refresh failed (detail fetch); leaving existing row "
+                  "untouched:", f95_id)
+            return False
+
+        # Preserve the accurate feed timestamp if the page label was missing:
+        # a manual refresh has no feed `ts`, so we keep whatever the page
+        # gave us (already set inside _fetch_detail) and only fall back to
+        # the existing stored value if the page had none.
+        self._update_record(atlas, f95rec, db_type)
+        print("  refreshed f95_id", f95_id)
+        return True
+
     # ---- detail (authenticated) ---------------------------------------------
-    def _fetch_detail(self, site_url, atlas, f95rec):
-        _jitter()  # politeness + jitter to avoid rate limiting -- ONLY here,
-                   # right before an actual page load.
-        r = self.session.get(site_url)
-        if r.status_code != 200:
-            print("detail fetch failed:", r.status_code, site_url)
-            return
+    def _fetch_detail(self, site_url, atlas, f95rec, retries=0):
+        """Fetch and parse the actual game/thread page, populating `atlas`
+        and `f95rec` in place. Returns True on a successful fetch+parse,
+        False if every attempt failed (so callers can decide whether to
+        skip the write). `retries` is the number of EXTRA attempts after the
+        first, with the normal jitter delay between each -- used for new
+        games and manual refreshes so a transient failure doesn't leave a
+        row with only listing-level fields.
+        """
+        r = None
+        for attempt in range(retries + 1):
+            _jitter()  # politeness + jitter -- ONLY right before a page load.
+            try:
+                r = self.session.get(site_url)
+            except Exception as ex:
+                print(f"detail fetch error (attempt {attempt + 1}/"
+                      f"{retries + 1}):", ex, site_url)
+                r = None
+                continue
+            if r.status_code == 200:
+                break
+            print(f"detail fetch failed (attempt {attempt + 1}/"
+                  f"{retries + 1}):", r.status_code, site_url)
+            r = None
+        if r is None:
+            return False
         d = parse_thread_detail(r.text)
 
         if d.get("logged_in") is False:
             # Session died and re-login failed; skip rather than store guest data.
             print("WARNING: not logged in for", site_url, "- skipping gated fields")
+
+        # Identity fields (title / version / short_name / id_name). In the
+        # normal listing path these are already set from the feed item before
+        # we get here, so we DON'T clobber them. On a standalone refresh
+        # (refresh_one) there's no feed item, so we derive them from the
+        # detail page instead -- the page's H1 title (with the trailing
+        # [version]/[dev] brackets stripped) and the inline "Version:" label.
+        if not atlas.get("title") and d.get("title"):
+            # Strip the trailing [version] [developer] brackets F95 appends
+            # to thread titles so the stored title is just the game name.
+            clean_title = re.sub(r"\s*\[[^\[\]]*\]\s*", " ", d["title"]).strip()
+            atlas["title"] = clean_title or d["title"].strip()
+        if not atlas.get("version") and d.get("version"):
+            atlas["version"] = str(d["version"]).strip()
+        if not atlas.get("developer") and d.get("developer"):
+            atlas["developer"] = str(d["developer"]).strip()
+        # If we set a title here (refresh path), also (re)derive the
+        # normalised short_name/id_name the same way the listing path does.
+        if atlas.get("title") and not atlas.get("short_name"):
+            atlas["short_name"] = re.sub(
+                r"[\W_]+", "", atlas["title"].strip().replace(" ", "")
+            ).upper()
+            creator_for_id = (atlas.get("creator")
+                              or atlas.get("developer") or "").upper()
+            atlas["id_name"] = atlas["short_name"] + "_" + creator_for_id
 
         # Category / engine / status come from the thread page's own prefix
         # labels (e.g. "VN", "Ren'Py", "Completed") -- the listing feed only
@@ -421,6 +560,8 @@ class f95:
         ext = d.get("external_ids", {})
         if ext:
             atlas["external_ids"] = json.dumps(ext, ensure_ascii=False)
+
+        return True
 
     # ---- persistence --------------------------------------------------------
     @staticmethod
