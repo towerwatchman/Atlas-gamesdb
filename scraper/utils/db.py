@@ -114,6 +114,11 @@ def UpdatetableDynamic(table, values, db_type=None):
     _check_table(table)
     if not values:
         return
+    # Any atlas write must bump its export timestamp (see
+    # _ensure_atlas_export_timestamp). Covers callers that upsert the atlas table
+    # directly (e.g. the dlsite agent) without stamping it themselves.
+    if table == "atlas":
+        values = _ensure_atlas_export_timestamp(dict(values))
     cols = list(values.keys())
     col_sql = ", ".join(cols)
     placeholders = ", ".join(["%s"] * len(cols))
@@ -134,6 +139,7 @@ def insertAtlas(values, db_type=None):
     """
     if not values:
         raise ValueError("insertAtlas called with empty values")
+    values = _ensure_atlas_export_timestamp(dict(values))
     cols = list(values.keys())
     col_sql = ", ".join(cols)
     placeholders = ", ".join(["%s"] * len(cols))
@@ -144,14 +150,32 @@ def insertAtlas(values, db_type=None):
     )
 
 
-def updateAtlasById(atlas_id, values, db_type=None):
-    """Update an existing atlas row in place, located by its atlas_id.
+def _ensure_atlas_export_timestamp(values):
+    """Guarantee an atlas row carries a fresh last_record_update so the delta
+    packager (WHERE last_record_update > start_time) actually exports it.
 
-    Used for threads we already have (resolved via f95_id). Updating by the
-    primary key keeps atlas_id stable across re-scrapes.
+    The single most common data-sync bug in this codebase: a source (F95, Steam,
+    dlsite, LewdCorner) writes or links an atlas row without bumping this
+    timestamp, so the row silently falls out of the client's incremental update
+    and the new/changed data never reaches users. Stamping it here, at the shared
+    db layer, means EVERY atlas insert/update/upsert exports regardless of which
+    caller wrote it -- no caller has to remember.
+
+    An explicitly-provided value is preserved (migrations/backfills may set a
+    specific timestamp on purpose); only a missing/blank one is filled.
     """
+    if values is None:
+        return values
+    existing = values.get("last_record_update")
+    if existing is None or existing == "" or existing == 0:
+        values["last_record_update"] = int(time.time())
+    return values
+
+
+
     if not values:
         return
+    values = _ensure_atlas_export_timestamp(dict(values))
     cols = [c for c in values.keys() if c != "atlas_id"]
     if not cols:
         return
