@@ -16,6 +16,8 @@ Refactor notes vs the original:
   * Table names are whitelisted before being interpolated.
   * Credentials come from the environment via config (no plaintext here).
 """
+import time
+
 import mysql.connector
 from mysql.connector import errors as mysql_errors
 
@@ -480,6 +482,30 @@ def deleteAtlasById(atlas_id, db_type=None):
     _run("DELETE FROM atlas WHERE atlas_id = %s", (atlas_id,), commit=True)
 
 
+def touchAtlasRecord(atlas_id, db_type=None, now=None):
+    """Bump an atlas row's last_record_update to `now` (default: current epoch).
+
+    The daily/base packager exports every table with
+    `WHERE last_record_update > start_time`. When a lewdcorner row is newly
+    linked or relinked to an atlas_id WITHOUT the atlas row itself being
+    rewritten, the lewdcorner row exports (fresh timestamp) but the atlas row
+    carrying the *title* does not (stale timestamp). The client then receives an
+    LC record pointing at an atlas_id it has no atlas_data row for, and falls
+    back to displaying "LewdCorner #<lc_id>".
+
+    Touching the atlas row here forces the title-bearing atlas row to ride along
+    in the next export so the client can resolve the real title.
+    """
+    if atlas_id is None:
+        return
+    if now is None:
+        now = int(time.time())
+    _run(
+        "UPDATE atlas SET last_record_update = %s WHERE atlas_id = %s",
+        (int(now), int(atlas_id)), commit=True,
+    )
+
+
 def relinkLewdcornerAtlasId(lc_id, new_atlas_id, db_type=None):
     """Point an existing lewdcorner row at the correct atlas_id. Used by the
     reconciler when fixing an already-mis-linked LC row."""
@@ -487,6 +513,9 @@ def relinkLewdcornerAtlasId(lc_id, new_atlas_id, db_type=None):
         "UPDATE lewdcorner SET atlas_id = %s WHERE lc_id = %s",
         (int(new_atlas_id), int(lc_id)), commit=True,
     )
+    # Ensure the (title-bearing) atlas row re-exports so the client can resolve
+    # the title for this newly-linked LC game. See touchAtlasRecord.
+    touchAtlasRecord(new_atlas_id, db_type)
 
 
 def getLcIdByAtlasId(atlas_id, db_type=None):

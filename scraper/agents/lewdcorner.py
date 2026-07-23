@@ -73,6 +73,7 @@ from scraper.utils.db import (
     getLcThreadUpdatesBulk, getLcThreadUpdated,
     findAtlasIdsByIdName, findFuzzyAtlasCandidates,
     getAtlasRowsByIds, enqueueLcReview, isLcInReviewQueue,
+    touchAtlasRecord,
 )
 
 # --- Fuzzy match scoring (integer 0-100) -----------------------------------
@@ -403,6 +404,13 @@ class lewdcorner:
             if not atlasOwnedByOtherSource(existing_atlas_id, db_type):
                 atlas["last_record_update"] = now
                 updateAtlasById(existing_atlas_id, self._clean(atlas), db_type)
+            else:
+                # Another source owns the atlas row, so we don't rewrite its
+                # fields -- but we still bump its timestamp so the title-bearing
+                # atlas row re-exports alongside this lewdcorner update. Without
+                # this the client receives the LC row with no matching
+                # atlas_data row and shows "LewdCorner #<lc_id>".
+                touchAtlasRecord(existing_atlas_id, db_type, now)
             lc["atlas_id"] = existing_atlas_id
             UpdatetableDynamic("lewdcorner", self._clean(lc), db_type)
             return "updated"
@@ -430,6 +438,12 @@ class lewdcorner:
             linked_atlas_id = exact_ids[0]
             lc["atlas_id"] = linked_atlas_id
             UpdatetableDynamic("lewdcorner", self._clean(lc), db_type)
+            # The atlas row already exists (title written by an earlier scrape),
+            # so linking here would otherwise leave its last_record_update stale
+            # and the title row would NOT re-export with this new LC row -> the
+            # client would show "LewdCorner #<lc_id>". Touch it so the title
+            # rides along in the next package.
+            touchAtlasRecord(linked_atlas_id, db_type, now)
             print("  linked lc_id", lc_id, "-> existing atlas_id",
                   linked_atlas_id, atlas["title"])
             return "linked"

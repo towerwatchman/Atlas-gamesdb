@@ -59,7 +59,7 @@ from scraper.utils.db import (
     deleteAtlasById, relinkLewdcornerAtlasId,
     getLcIdByAtlasId, deleteLewdcornerByLcId, getLewdcornerRowByLcId,
     getLcReviewQueue, dequeueLcReview, enqueueLcReview,
-    insertAtlas, UpdatetableDynamic,
+    insertAtlas, UpdatetableDynamic, touchAtlasRecord,
 )
 import time
 
@@ -664,6 +664,10 @@ def _resolve_queue_row(q):
         new_aid = insertAtlas(atlas_payload)
         lc_payload["atlas_id"] = new_aid
         UpdatetableDynamic("lewdcorner", lc_payload)
+        # The enqueued atlas snapshot may predate this resolution; make sure the
+        # freshly-inserted (title-bearing) atlas row exports now so the client
+        # can resolve the title rather than showing "LewdCorner #<lc_id>".
+        touchAtlasRecord(new_aid)
         dequeueLcReview(lc_id)
         print(green(f"  created atlas_id {new_aid} and linked lc_id {lc_id}\n"))
         return "new"
@@ -672,6 +676,10 @@ def _resolve_queue_row(q):
     chosen = cand_ids[choice]
     lc_payload["atlas_id"] = chosen
     UpdatetableDynamic("lewdcorner", lc_payload)
+    # Bump the (existing, title-bearing) atlas row so it re-exports with this
+    # newly-linked LC row; otherwise the client gets the LC record with no
+    # matching atlas_data row and shows "LewdCorner #<lc_id>".
+    touchAtlasRecord(chosen)
     dequeueLcReview(lc_id)
     print(green(f"  linked lc_id {lc_id} -> atlas_id {chosen}"))
     # For multi-match, optionally clean up orphaned duplicate atlas rows.
