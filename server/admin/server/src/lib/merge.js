@@ -12,7 +12,7 @@
 //     itself refuses to delete a still-referenced atlas row — we surface that
 //     as an orphan prompt rather than forcing it.
 // ---------------------------------------------------------------------------
-import { q, q1, tx } from './db.js';
+import { q, q1, tx, touchAtlas } from './db.js';
 import { logAudit } from './atlas.js';
 
 // Sources that support floating (migration 002 relaxed these two). dlsite/sxs
@@ -106,8 +106,8 @@ export async function mergeAtlasGroup({ survivorId, groupIds, user }) {
       });
     }
     await conn.execute(
-      'UPDATE atlas SET edited = 1, edited_at = ?, edited_by = ? WHERE atlas_id = ?',
-      [now(), user, survivorId]);
+      'UPDATE atlas SET edited = 1, edited_at = ?, edited_by = ?, last_record_update = ? WHERE atlas_id = ?',
+      [now(), user, now(), survivorId]);
   });
 
   return { relinked, deleted };
@@ -146,6 +146,8 @@ export async function relinkSource({ table, sourceId, action, atlasId, user }) {
     if (action === 'float') {
       await conn.execute(
         `UPDATE ${table} SET atlas_id = NULL, floating = 1 WHERE ${meta.idCol} = ?`, [sourceId]);
+      // The previous atlas lost a source -> its exported data changed.
+      if (previousAtlasId != null) await touchAtlas(conn, previousAtlasId);
       await logAudit(conn, {
         atlasId: previousAtlasId, field: `${table}.float`, user,
         oldValue: `${meta.idCol} ${sourceId} -> atlas_id ${previousAtlasId}`,
@@ -155,6 +157,12 @@ export async function relinkSource({ table, sourceId, action, atlasId, user }) {
       await conn.execute(
         `UPDATE ${table} SET atlas_id = ?, floating = 0 WHERE ${meta.idCol} = ?`,
         [Number(atlasId), sourceId]);
+      // The target atlas gained this source (e.g. a new f95/steam id on the
+      // record) and the previous one lost it -> both must re-export.
+      await touchAtlas(conn, Number(atlasId));
+      if (previousAtlasId != null && previousAtlasId !== Number(atlasId)) {
+        await touchAtlas(conn, previousAtlasId);
+      }
       await logAudit(conn, {
         atlasId: Number(atlasId), field: `${table}.link`, user,
         oldValue: `${meta.idCol} ${sourceId} -> atlas_id ${previousAtlasId ?? 'floating'}`,

@@ -7,7 +7,7 @@
 // requires at least one of the two. Known store kinds get a canonical url
 // built from the id when the admin only supplies an id.
 // ---------------------------------------------------------------------------
-import { q, write, tx } from './db.js';
+import { q, write, tx, touchAtlas } from './db.js';
 import { logAudit } from './atlas.js';
 
 export const MANUAL_LINK_KINDS = ['steam', 'gog', 'itch', 'custom'];
@@ -75,6 +75,9 @@ export async function addManualLink(atlasId, { kind, label, extId, url }, user) 
       [atlasId, k, lbl, cleanId, cleanUrl, user, ts],
     );
     insertId = res.insertId;
+    // A manual link is new data on this atlas record; bump its export timestamp
+    // so the added id/url reaches clients.
+    await touchAtlas(conn, atlasId, ts);
     await logAudit(conn, {
       atlasId, field: 'manual_link.add', user,
       oldValue: null,
@@ -97,6 +100,8 @@ export async function removeManualLink(atlasId, linkId, user) {
   const l = rows[0];
   await tx(async (conn) => {
     await conn.execute('DELETE FROM atlas_manual_links WHERE link_id = ? AND atlas_id = ?', [linkId, atlasId]);
+    // Removing a link changes this atlas record's exported data; re-export it.
+    await touchAtlas(conn, atlasId);
     await logAudit(conn, {
       atlasId, field: 'manual_link.remove', user,
       oldValue: `${l.kind}${l.label ? ` (${l.label})` : ''}: ${l.ext_id || ''}${l.ext_id && l.url ? ' · ' : ''}${l.url || ''}`.trim(),

@@ -74,9 +74,10 @@ export async function editAtlasRow(atlasId, changes, user) {
   await tx(async (conn) => {
     await conn.execute(
       `UPDATE atlas SET ${setParts.join(', ')},
-         edited = 1, edited_at = ?, edited_by = ?
+         edited = 1, edited_at = ?, edited_by = ?,
+         last_record_update = ?
        WHERE atlas_id = ?`,
-      [...setParams, ts, user, atlasId],
+      [...setParams, ts, user, ts, atlasId],
     );
     for (const a of auditRows) {
       await logAudit(conn, {

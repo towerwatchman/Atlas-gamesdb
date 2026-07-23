@@ -7,7 +7,7 @@
 //   • dismissing it (drop from queue, make no link).
 // Candidates are re-derived live so the queue survives atlas changes.
 // ---------------------------------------------------------------------------
-import { q, q1, tx } from './db.js';
+import { q, q1, tx, touchAtlas } from './db.js';
 import { findFuzzyAtlasCandidates, findAtlasIdsByIdName } from './candidates.js';
 import { logAudit, EDITABLE_ATLAS_COLUMNS } from './atlas.js';
 
@@ -76,6 +76,10 @@ export async function linkQueueItem(lcId, atlasId, user) {
 
   await tx(async (conn) => {
     await upsertLewdcorner(conn, lcPayload);
+    // The atlas row already exists (its title etc. were written earlier); linking
+    // here would otherwise leave its last_record_update stale and the title row
+    // would NOT re-export with this LC link -> client shows "LewdCorner #<id>".
+    await touchAtlas(conn, Number(atlasId));
     await conn.execute('DELETE FROM lc_review_queue WHERE lc_id = ?', [lcId]);
     await logAudit(conn, {
       atlasId: Number(atlasId), field: 'lc.link', user,
@@ -92,6 +96,9 @@ export async function newFromQueueItem(lcId, user) {
   if (!item) throw Object.assign(new Error('Queue item not found.'), { status: 404 });
   const atlasPayload = parseJson(item.atlas_payload, {});
   delete atlasPayload.atlas_id;
+  // The queued payload may carry a stale (or no) last_record_update; force a
+  // fresh one so the newly-created atlas row exports to clients.
+  atlasPayload.last_record_update = Math.floor(Date.now() / 1000);
   const lcPayload = parseJson(item.lc_payload, {});
   lcPayload.lc_id = Number(lcId);
 

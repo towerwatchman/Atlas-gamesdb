@@ -70,3 +70,20 @@ export async function tx(fn) {
 }
 
 export { pool };
+
+/**
+ * Bump an atlas row's last_record_update so the daily/base packager
+ * (WHERE last_record_update > start_time) actually re-exports it.
+ *
+ * Any admin-portal action that writes or links an atlas row must call this (or
+ * set last_record_update inline), or the change silently fails to reach clients.
+ * Accepts a transaction connection so it participates in the caller's tx.
+ */
+export async function touchAtlas(conn, atlasId, ts = null) {
+  if (atlasId == null) return;
+  const stamp = ts == null ? Math.floor(Date.now() / 1000) : ts;
+  await conn.execute(
+    'UPDATE atlas SET last_record_update = ? WHERE atlas_id = ?',
+    [stamp, atlasId],
+  );
+}
