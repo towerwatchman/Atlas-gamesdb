@@ -16,6 +16,7 @@ Refactor notes vs the original:
   * Table names are whitelisted before being interpolated.
   * Credentials come from the environment via config (no plaintext here).
 """
+import json
 import time
 
 import mysql.connector
@@ -748,3 +749,146 @@ def downloadBase(db_type, table, start_time):
         f"SELECT * FROM {table} WHERE last_record_update > %s ORDER BY atlas_id",
         (start_time,), fetch="all", dict_cursor=True,
     )
+
+
+def _merge_manual_links_into_external_ids(atlas_rows):
+    """Overlay admin-approved manual links (atlas_manual_links) onto each atlas
+    row's external_ids blob, at EXPORT time only -- the stored atlas.external_ids
+    column is never modified, so a re-scrape can't clobber manual links (that is
+    the whole reason atlas_manual_links exists as a separate, scraper-untouched
+    table).
+
+    The client resolves Steam/GOG ids from external_ids, but the historic shape
+    (`{"steam_appid": "123"}`) holds only ONE id per store. Manual linking allows
+    several (e.g. multiple Steam season appids under one atlas), so we add
+    array-valued fields alongside the scalar ones:
+
+        {
+          "steam_appid":  "111",                       # primary, backward compat
+          "steam_appids": ["111","222","333"],         # full deduped set
+          "gog_id":       "...",
+          "gog_ids":      [...],
+          "itch": [...urls...], "custom": [...urls...]  # non-store links as urls
+        }
+
+    Reconciliation: manual ids are UNIONED with any scraper-discovered id, manual
+    first (admin override), then de-duplicated preserving order. The scalar
+    `steam_appid`/`gog_id` becomes the first of the merged set so existing single
+    -id clients keep working; the primary is the manual one when present.
+    """
+    if not atlas_rows:
+        return atlas_rows
+
+    atlas_ids = [r.get("atlas_id") for r in atlas_rows if r.get("atlas_id") is not None]
+    if not atlas_ids:
+        return atlas_rows
+
+    # Bulk-fetch manual links for exactly the atlas_ids in this batch.
+    placeholders = ", ".join(["%s"] * len(atlas_ids))
+    links = _run(
+        f"SELECT atlas_id, kind, ext_id, url FROM atlas_manual_links "
+        f"WHERE atlas_id IN ({placeholders})",
+        tuple(atlas_ids), fetch="all", dict_cursor=True,
+    ) or []
+
+    # Group manual links per atlas_id.
+    by_atlas = {}
+    for l in links:
+        by_atlas.setdefault(l["atlas_id"], []).append(l)
+
+    if not by_atlas:
+        return atlas_rows
+
+    def _dedupe(seq):
+        seen = set()
+        out = []
+        for v in seq:
+            if v is None:
+                continue
+            s = str(v).strip()
+            if not s or s in seen:
+                continue
+            seen.add(s)
+            out.append(s)
+        return out
+
+    for row in atlas_rows:
+        aid = row.get("atlas_id")
+        manual = by_atlas.get(aid)
+        if not manual:
+            continue
+
+        # Parse the existing (scraper-written) external_ids blob.
+        raw = row.get("external_ids")
+        ext = {}
+        if raw:
+            try:
+                ext = json.loads(raw) if isinstance(raw, str) else dict(raw)
+            except (ValueError, TypeError):
+                ext = {}
+        if not isinstance(ext, dict):
+            ext = {}
+
+        # Collect manual ids/urls per kind.
+        manual_steam = [m["ext_id"] for m in manual if m["kind"] == "steam" and m.get("ext_id")]
+        manual_gog = [m["ext_id"] for m in manual if m["kind"] == "gog" and m.get("ext_id")]
+        manual_itch = [m["url"] for m in manual if m["kind"] == "itch" and m.get("url")]
+        manual_custom = [m["url"] for m in manual if m["kind"] == "custom" and m.get("url")]
+
+        # Steam: union manual (first, admin override) + scraped scalar.
+        if manual_steam:
+            scraped = [ext.get("steam_appid"), ext.get("steam_id")]
+            steam_all = _dedupe(manual_steam + scraped)
+            if steam_all:
+                ext["steam_appids"] = steam_all
+                ext["steam_appid"] = steam_all[0]
+
+        # GOG: same treatment.
+        if manual_gog:
+            scraped_g = [ext.get("gog_id"), ext.get("gog_appid")]
+            gog_all = _dedupe(manual_gog + scraped_g)
+            if gog_all:
+                ext["gog_ids"] = gog_all
+                ext["gog_id"] = gog_all[0]
+
+        # Non-store links: expose as url arrays under their kind.
+        if manual_itch:
+            ext["itch"] = _dedupe(list(ext.get("itch") or []) + manual_itch)
+        if manual_custom:
+            ext["custom"] = _dedupe(list(ext.get("custom") or []) + manual_custom)
+
+        row["external_ids"] = json.dumps(ext, ensure_ascii=False)
+
+    return atlas_rows
+
+
+def downloadAtlasBase(db_type, start_time):
+    """Atlas export rows with admin manual links overlaid into external_ids.
+    Use this instead of downloadBase(..., 'atlas', ...) so manual links always
+    ship. See _merge_manual_links_into_external_ids.
+
+    Besides the normal timestamp-delta rows, this UNIONS in any atlas row that
+    has manual links, regardless of its last_record_update. That makes manual
+    links self-healing: even if a link was added without bumping the atlas
+    timestamp (older data, or a missed touch), the row still exports with its
+    links overlaid, so the client always sees them. Full exports (start_time=0)
+    already include everything, so the union is a no-op there.
+    """
+    rows = downloadBase(db_type, "atlas", start_time)
+
+    if start_time and start_time > 0:
+        seen = {r.get("atlas_id") for r in rows}
+        manual_rows = _run(
+            """
+            SELECT a.* FROM atlas a
+             WHERE a.last_record_update <= %s
+               AND EXISTS (SELECT 1 FROM atlas_manual_links m
+                            WHERE m.atlas_id = a.atlas_id)
+            """,
+            (start_time,), fetch="all", dict_cursor=True,
+        ) or []
+        for r in manual_rows:
+            if r.get("atlas_id") not in seen:
+                rows.append(r)
+
+    return _merge_manual_links_into_external_ids(rows)
