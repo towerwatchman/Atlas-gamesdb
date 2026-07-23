@@ -97,7 +97,10 @@ class packager:
                 outfile.write(json.dumps(data, default=str))
 
     def createBaseUpdate(type, start_time, is_full=False):
-        atlas_object = {"atlas": downloadBase(type, "atlas", start_time)}
+        # Atlas rows carry admin manual links (atlas_manual_links) overlaid into
+        # external_ids so approved manual links always reach clients, without the
+        # scraper ever writing them back to the stored column.
+        atlas_object = {"atlas": downloadAtlasBase(type, start_time)}
         f95_object = {"f95_zone": downloadBase(type, "f95_zone", start_time)}
         lc_object = {"lewdcorner": downloadBase(type, "lewdcorner", start_time)}
         min_ver = {"min_ver": "0.0.0"}
@@ -108,6 +111,9 @@ class packager:
         return data
 
     def createBackup(type, folder, start_time):
+        # Raw table snapshot (for restore/archival), so external_ids is the
+        # stored value, NOT the manual-link overlay used in the client package.
+        # Manual links are backed up via their own table's dump if needed.
         atlas_object = downloadBase(type, "atlas", start_time)
         f95_object = downloadBase(type, "f95_zone", start_time)
         lc_object = downloadBase(type, "lewdcorner", start_time)
