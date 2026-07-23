@@ -791,10 +791,19 @@ def _merge_manual_links_into_external_ids(atlas_rows):
         tuple(atlas_ids), fetch="all", dict_cursor=True,
     ) or []
 
-    # Group manual links per atlas_id.
+    # Group manual links per atlas_id. Normalize the key to int so a type
+    # mismatch between the atlas row's atlas_id and the manual-links atlas_id
+    # (e.g. int vs str from different queries/drivers) can't cause a silent miss
+    # where NO ids get added.
+    def _aid_key(v):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return str(v).strip()
+
     by_atlas = {}
     for l in links:
-        by_atlas.setdefault(l["atlas_id"], []).append(l)
+        by_atlas.setdefault(_aid_key(l["atlas_id"]), []).append(l)
 
     if not by_atlas:
         return atlas_rows
@@ -812,8 +821,11 @@ def _merge_manual_links_into_external_ids(atlas_rows):
             out.append(s)
         return out
 
+    def _kind(m):
+        return str(m.get("kind") or "").strip().lower()
+
     for row in atlas_rows:
-        aid = row.get("atlas_id")
+        aid = _aid_key(row.get("atlas_id"))
         manual = by_atlas.get(aid)
         if not manual:
             continue
@@ -829,11 +841,11 @@ def _merge_manual_links_into_external_ids(atlas_rows):
         if not isinstance(ext, dict):
             ext = {}
 
-        # Collect manual ids/urls per kind.
-        manual_steam = [m["ext_id"] for m in manual if m["kind"] == "steam" and m.get("ext_id")]
-        manual_gog = [m["ext_id"] for m in manual if m["kind"] == "gog" and m.get("ext_id")]
-        manual_itch = [m["url"] for m in manual if m["kind"] == "itch" and m.get("url")]
-        manual_custom = [m["url"] for m in manual if m["kind"] == "custom" and m.get("url")]
+        # Collect manual ids/urls per kind (case-insensitive kind match).
+        manual_steam = [m["ext_id"] for m in manual if _kind(m) == "steam" and m.get("ext_id")]
+        manual_gog = [m["ext_id"] for m in manual if _kind(m) == "gog" and m.get("ext_id")]
+        manual_itch = [m["url"] for m in manual if _kind(m) == "itch" and m.get("url")]
+        manual_custom = [m["url"] for m in manual if _kind(m) == "custom" and m.get("url")]
 
         # Steam: union manual (first, admin override) + scraped scalar.
         if manual_steam:
