@@ -173,7 +173,15 @@ def _ensure_atlas_export_timestamp(values):
     return values
 
 
+def updateAtlasById(atlas_id, values, db_type=None):
+    """Update an existing atlas row in place by its atlas_id.
 
+    Unlike UpdatetableDynamic (which upserts on a natural key), this targets a
+    known primary-key row and only writes the provided columns. The atlas_id
+    itself is never part of the SET clause. Bumps last_record_update via
+    _ensure_atlas_export_timestamp so the change is picked up by the delta
+    packager.
+    """
     if not values:
         return
     values = _ensure_atlas_export_timestamp(dict(values))
