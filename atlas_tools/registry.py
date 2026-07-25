@@ -344,6 +344,35 @@ TASKS: List[Task] = [
     ),
 
     Task(
+        id="repair_external_ids",
+        label="Find/repair external_ids holding a URL route",
+        group="Maintenance",
+        module="tools.maintenance.repair_external_ids",
+        help=("Finds rows where a social/support id is actually a URL route "
+              "instead of an account name -- e.g. a patreon id of \"c\", left "
+              "behind when Patreon moved creators to patreon.com/c/<creator>. "
+              "Reporting is read-only; Enqueue only writes to "
+              "f95_refresh_queue, and the refresh worker does the fixing."),
+        params=[
+            Param("platform", "Platform", CHOICE, default="(all)",
+                  arg="--platform",
+                  choices=["(all)", "patreon", "twitter", "facebook", "kofi"],
+                  value_map={"(all)": None, "patreon": "patreon",
+                             "twitter": "twitter", "facebook": "facebook",
+                             "kofi": "kofi"}),
+            Param("enqueue", "Queue affected games for refresh", FLAG,
+                  default=False, arg="--enqueue",
+                  help="Without this it only reports."),
+            Param("limit", "Limit how many to queue", INT, default="",
+                  arg="--limit", help="Blank = all. Try 50 first."),
+            Param("priority", "Queue priority", INT, default="50",
+                  arg="--priority", help="Lower runs sooner."),
+            Param("csv_path", "Also dump to CSV", FILE, default="",
+                  arg="--csv"),
+        ],
+    ),
+
+    Task(
         id="reconcile_lc",
         label="Reconcile LewdCorner <-> atlas",
         group="Maintenance",

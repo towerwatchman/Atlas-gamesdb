@@ -18,7 +18,7 @@ tools/
 atlas_tools/            Windows desktop app (see docs/DESKTOP_APP.md)
 build/                  PyInstaller spec + build_exe.bat
 deploy/                 deploy.example.json
-docs/                   DESKTOP_APP.md, DEPLOY.md, LEWDCORNER_CHANGES.md
+docs/                   DESKTOP_APP.md, DEPLOY.md, EXTERNAL_IDS.md, ...
 scripts/                create_package.bat
 server/admin/           Node admin app (its own README)
 tests/

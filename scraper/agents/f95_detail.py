@@ -70,6 +70,41 @@ def _is_masked(url):
     return "/masked/" in (url or "")
 
 
+# First path segments that are site ROUTES rather than account identifiers.
+# These must be excluded from the bare-slug patterns in _classify_external, or
+# the route name itself gets stored as the creator id. This is the bug that put
+# a patreon id of "c" on every game whose thread had been updated to Patreon's
+# newer /c/<creator> URL format.
+#
+# Kept as a shared constant so that adding a newly-observed route only needs one
+# edit, and so the repair tool can recognise already-stored bad values.
+_PATREON_ROUTES = (
+    "c|cw|user|bePatron|join|checkout|posts|post|home|login|signup|search|"
+    "messages|settings|notifications|api|oauth2|m|policy|about|create|"
+    "dashboard|pledges|redeem|gift|collection|shop"
+)
+
+_FACEBOOK_ROUTES = (
+    "groups|pages|people|profile\\.php|profile|pg|watch|events|marketplace|"
+    "sharer|share|login|home|help|search|hashtag|story\\.php|permalink\\.php|"
+    "photo\\.php|media|reel|gaming"
+)
+
+_TWITTER_ROUTES = (
+    "i|intent|share|home|search|hashtag|explore|notifications|messages|"
+    "settings|login|signup|compose|status"
+)
+
+# Values that are known to be routes, not ids -- used to find rows that were
+# written before the patterns above were tightened. Lower-cased for comparison.
+BAD_EXTERNAL_VALUES = {
+    "patreon": {v.lower().replace("\\", "") for v in _PATREON_ROUTES.split("|")},
+    "facebook": {v.lower().replace("\\", "") for v in _FACEBOOK_ROUTES.split("|")},
+    "twitter": {v.lower().replace("\\", "") for v in _TWITTER_ROUTES.split("|")},
+    "kofi": {"s", "post", "c"},
+}
+
+
 def _host_of(url):
     """Real destination host, even for masked links (/masked/<host>/...)."""
     if _is_masked(url):
@@ -86,21 +121,37 @@ def _classify_external(url):
         ("itch_url", r"https?://([\w-]+\.itch\.io(?:/[\w-]+)?)"),
         ("vndb_id", r"vndb\.org/(v\d+)"),
         ("gog_url", r"gog\.com/(?:[\w-]+/)?game/([\w-]+)"),
-        # Old-style numeric profile (patreon.com/user?u=12345) has no usable
-        # slug in the path -> capture the numeric id instead of the literal
-        # word "user". Must be checked before the generic slug pattern below.
-        ("patreon", r"patreon\.com/user\?u=(\d+)"),
-        ("patreon", r"patreon\.com/(?!user(?:[/?]|$))([\w-]+)"),
-        ("subscribestar", r"subscribestar\.adult/([\w-]+)"),
+        # Patreon has three URL generations in the wild. The bare-slug pattern
+        # has to come LAST, because it captures whatever the first path segment
+        # happens to be -- which is exactly how a pile of games ended up with a
+        # patreon id of "c" after Patreon moved creators to /c/<slug> in 2024.
+        #   patreon.com/user?u=12345   old numeric profile, no slug at all
+        #   patreon.com/c/<slug>       current creator page
+        #   patreon.com/cw/<slug>      current creator-page variant
+        #   patreon.com/join/<slug>    pledge link, still identifies a creator
+        #   patreon.com/<slug>         legacy vanity URL
+        # All forms normalise to the bare slug, so a thread that switched to a
+        # /c/ link keeps the value it had before the switch.
+        ("patreon", r"patreon\.com/(?:user|bePatron)\?u=(\d+)"),
+        ("patreon", r"patreon\.com/cw?/([\w-]+)"),
+        ("patreon", r"patreon\.com/(?:join|checkout)/([\w-]+)"),
+        ("patreon", rf"patreon\.com/(?!(?:{_PATREON_ROUTES})(?:[/?]|$))([\w-]+)"),
+        ("subscribestar", r"subscribestar\.(?:adult|com)/([\w-]+)"),
         ("buymeacoffee", r"buymeacoffee\.com/([\w-]+)"),
-        ("kofi", r"ko-?fi\.com/([\w-]+)"),
+        # ko-fi.com/s/<id> is a shop item, ko-fi.com/post/<slug> a post; only a
+        # bare first segment is the creator.
+        ("kofi", r"ko-?fi\.com/(?!(?:s|post|c)(?:[/?]|$))([\w-]+)"),
         # discord.gg/<code>, discord.com/invite/<code>, and the older
         # discordapp.com/invite/<code> domain are all still seen in the wild.
         ("discord", r"discord(?:app)?\.(?:gg|com/invite)/([\w-]+)"),
         ("gamejolt", r"gamejolt\.com/games/[\w-]+/(\d+)"),
         ("bluesky", r"bsky\.app/profile/([\w.-]+)"),
-        ("facebook", r"facebook\.com/([\w.-]+)"),
-        ("twitter", r"(?:twitter|x)\.com/([\w]+)"),
+        # Same reserved-route problem as Patreon: facebook.com/groups/<id> and
+        # /profile.php?id= are not page names.
+        ("facebook", r"facebook\.com/profile\.php\?id=(\d+)"),
+        ("facebook", rf"facebook\.com/(?!(?:{_FACEBOOK_ROUTES})(?:[/?]|$))([\w.-]+)"),
+        # x.com/i/... and /intent/... are UI routes, not handles.
+        ("twitter", rf"(?:twitter|x)\.com/(?!(?:{_TWITTER_ROUTES})(?:[/?]|$))(\w+)"),
     ]
     for kind, pat in patterns:
         m = re.search(pat, url, re.I)

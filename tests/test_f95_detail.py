@@ -1,6 +1,6 @@
 """
 Regression tests for the F95 thread-detail parser, run against saved
-fixtures (no network). Covers five real threads with different layouts.
+fixtures (no network). Covers six real threads with different layouts.
 
     python -m pytest tests/            # or:  python tests/test_f95_detail.py
 """
@@ -148,6 +148,128 @@ def test_support_widget_requires_matching_developer():
     assert d["external_ids"] == {}
 
 
+def test_patreon_new_c_slug_url_format():
+    """patreon.com/c/<creator> must yield the creator, not the literal "c".
+
+    Patreon moved creator pages to /c/<slug> during 2024. The bare-slug regex
+    captured whatever the first path segment was, so every thread that had been
+    updated to the new link format stored a patreon id of "c" -- around 725
+    games in the live database.
+    """
+    d = _load("everybody_lies")
+    assert d["external_ids"].get("patreon") == "Everybody_Lies"
+
+
+def test_everybody_lies_full_parse():
+    # The rest of this thread must keep parsing, so a future change to the
+    # patreon patterns can't quietly break the surrounding extraction.
+    d = _load("everybody_lies")
+    assert d["logged_in"] is True
+    assert d["thread_id"] == "300521"
+    assert d["version"] == "0.1"
+    assert d["developer"] == "Yngvi Inc."
+    assert d["external_ids"].get("twitter") == "EBL_VN"
+    assert d["external_ids"].get("discord") == "dqyTbHTrZF"
+    assert d["external_ids"].get("itch_url") == \
+        "everybody-lies.itch.io/everybody-lies"
+    assert len(d["downloads"]) == 4
+    assert len(d["screens"]) == 9
+
+
+def test_patreon_cw_variant_and_reply_scope():
+    """A /cw/ link in a REPLY must not become this game's patreon id.
+
+    This thread happens to contain patreon.com/cw/RenpyToolTotalTranslate in
+    another member's signature. Only the opening post is in scope, so the
+    game's own /c/ link is the one that wins.
+    """
+    d = _load("everybody_lies")
+    assert d["external_ids"]["patreon"] != "RenpyToolTotalTranslate"
+
+
+# --- unit-level coverage of the classifier ---------------------------------
+# The fixtures above only cover the URL shapes those five threads happen to
+# use. These cases pin the shapes that broke, plus the near-misses that a
+# careless fix would regress (a legitimate slug that merely STARTS with a
+# reserved route word).
+
+CLASSIFY_CASES = [
+    # patreon: every generation of URL normalises to the bare slug
+    ("https://www.patreon.com/c/Everybody_Lies", ("patreon", "Everybody_Lies")),
+    ("https://www.patreon.com/cw/SomeCreator", ("patreon", "SomeCreator")),
+    ("https://www.patreon.com/user?u=19780656", ("patreon", "19780656")),
+    ("https://www.patreon.com/bePatron?u=19780656", ("patreon", "19780656")),
+    ("https://patreon.com/join/DrPinkCake", ("patreon", "DrPinkCake")),
+    ("https://patreon.com/Yngvi", ("patreon", "Yngvi")),
+    ("https://patreon.com/c/Caribdis/posts", ("patreon", "Caribdis")),
+    ("https://PATREON.COM/C/UpperCase", ("patreon", "UpperCase")),
+    ("https://f95zone.to/masked/patreon.com/c/SomeDev", ("patreon", "SomeDev")),
+    # site routes are not creators
+    ("https://www.patreon.com/posts/dev-log-123456", None),
+    ("https://www.patreon.com/home", None),
+    # slugs that merely begin with a reserved word must still work
+    ("https://patreon.com/coolgamedev", ("patreon", "coolgamedev")),
+    ("https://patreon.com/cwilson", ("patreon", "cwilson")),
+    ("https://patreon.com/userland", ("patreon", "userland")),
+    ("https://patreon.com/mystudio", ("patreon", "mystudio")),
+    # twitter / x
+    ("https://x.com/EBL_VN", ("twitter", "EBL_VN")),
+    ("https://x.com/i/status/123", None),
+    ("https://twitter.com/intent/tweet?text=hi", None),
+    ("https://x.com/ianDev", ("twitter", "ianDev")),
+    # facebook
+    ("https://facebook.com/LoveJointCom", ("facebook", "LoveJointCom")),
+    ("https://facebook.com/groups/123456", None),
+    ("https://facebook.com/profile.php?id=61550", ("facebook", "61550")),
+    ("https://facebook.com/pagesOfGlory", ("facebook", "pagesOfGlory")),
+    # ko-fi
+    ("https://ko-fi.com/somedev", ("kofi", "somedev")),
+    ("https://ko-fi.com/s/abc123", None),
+    ("https://ko-fi.com/sarah", ("kofi", "sarah")),
+    # subscribestar now also on .com
+    ("https://subscribestar.adult/dev-name", ("subscribestar", "dev-name")),
+    ("https://subscribestar.com/dev-name", ("subscribestar", "dev-name")),
+    # untouched platforms, guarding against collateral damage
+    ("https://vndb.org/v31929", ("vndb_id", "v31929")),
+    ("https://caribdis.itch.io", ("itch_url", "caribdis.itch.io")),
+    ("https://discord.gg/KyCc5E4", ("discord", "KyCc5E4")),
+    ("https://store.steampowered.com/app/1126320/", ("steam_appid", "1126320")),
+    ("https://www.gog.com/en/game/being_a_dik", ("gog_url", "being_a_dik")),
+    ("https://bsky.app/profile/drpinkcake.bsky.social",
+     ("bluesky", "drpinkcake.bsky.social")),
+]
+
+
+def test_classify_external_url_shapes():
+    from scraper.agents.f95_detail import _classify_external
+    wrong = []
+    for url, expected in CLASSIFY_CASES:
+        got = _classify_external(url)
+        if got != expected:
+            wrong.append(f"{url} -> {got}, expected {expected}")
+    assert not wrong, "\n".join(wrong)
+
+
+def test_bad_external_values_matches_the_patterns():
+    """The repair tool's bad-value set must stay in step with the regexes.
+
+    Anything listed as a reserved route has to actually be rejected by the
+    classifier, otherwise the tool would flag rows the scraper still produces.
+    """
+    from scraper.agents.f95_detail import BAD_EXTERNAL_VALUES, _classify_external
+    hosts = {"patreon": "https://patreon.com/{}",
+             "facebook": "https://facebook.com/{}",
+             "twitter": "https://x.com/{}",
+             "kofi": "https://ko-fi.com/{}"}
+    for kind, values in BAD_EXTERNAL_VALUES.items():
+        for value in values:
+            if not value or "." in value:
+                continue          # profile.php etc. carry their own pattern
+            got = _classify_external(hosts[kind].format(value))
+            assert got is None or got[1].lower() != value, \
+                f"{kind}: {value!r} is listed as a route but still classifies"
+
+
 if __name__ == "__main__":
     test_logged_out_is_gated()
     test_logged_in_unlocks_everything()
@@ -160,4 +282,9 @@ if __name__ == "__main__":
     test_facebook_captured()
     test_patreon_numeric_user_id_not_literal_user()
     test_support_widget_requires_matching_developer()
+    test_patreon_new_c_slug_url_format()
+    test_everybody_lies_full_parse()
+    test_patreon_cw_variant_and_reply_scope()
+    test_classify_external_url_shapes()
+    test_bad_external_values_matches_the_patterns()
     print("all parser tests passed")
