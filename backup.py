@@ -10,7 +10,8 @@ from scraper.utils.packager import packager
 from scraper.utils.db import TruncateUpdatesTable
 
 
-def main():
+def main(argv=None):
+    # No arguments; accepted for a uniform entry-point signature.
     db_type = database.REMOTE
     print(f"Backup -> MySQL @ {config.host()}")
     print("  env:", config.env_status())
@@ -20,7 +21,8 @@ def main():
     TruncateUpdatesTable(db_type)
     packager.createFullPackage(db_type, 0)
     print("Master package created")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

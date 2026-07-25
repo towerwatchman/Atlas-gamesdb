@@ -3,12 +3,60 @@
 Scrapes game metadata from F95zone (and DLsite) into the Atlas database and
 produces a downloadable update package.
 
+## Layout
+
+```
+api.py                  scrape + package        <- run by the server
+backup.py               rebuild master package  <- run by the server
+f95_refresh_worker.py   refresh-queue daemon    <- run by the server
+scraper/                the scraper package
+tools/
+  backfill/             repair export timestamps (dry run unless --apply)
+  diagnostics/          read-only inspection
+  maintenance/          interactive / destructive fixes
+  refresh/              single-game and bulk refresh
+atlas_tools/            Windows desktop app (see docs/DESKTOP_APP.md)
+build/                  PyInstaller spec + build_exe.bat
+deploy/                 deploy.example.json
+docs/                   DESKTOP_APP.md, DEPLOY.md, LEWDCORNER_CHANGES.md
+scripts/                create_package.bat
+server/admin/           Node admin app (its own README)
+tests/
+```
+
+The three entry points the server runs stay at the root on purpose, so existing
+cron/systemd/pm2 entries need no changes. Everything under `tools/` moved into
+folders but **kept its filename**, so the only difference is the path:
+
+```bash
+python tools/diagnostics/find_duplicates.py --scope f95   # by path
+python -m tools.diagnostics.find_duplicates --scope f95    # or as a module
+```
+
+Both work from the project root.
+
+## Desktop app (Windows)
+
+Rather than remembering each script's flags, there's a single window that runs
+all of them, relays their interactive prompts, and pushes updates to the server:
+
+```bash
+python -m atlas_tools        # from a checkout
+build\build_exe.bat          # build AtlasTools.exe
+```
+
+See **docs/DESKTOP_APP.md** to build it and **docs/DEPLOY.md** for deployment.
+
 ## Setup
 
 ```bash
-pip install -r requirements.txt
-cp .env.example .env      # then fill in real values
+pip install -r requirements.txt            # server / scraper
+pip install -r requirements-desktop.txt    # plus the Windows app + deploy
+cp .env.example .env                       # then fill in real values
 ```
+
+> `pandas` was removed from `requirements.txt` -- nothing in the codebase
+> imports it. It pulled in numpy and added ~50MB to the Windows build.
 
 `.env` holds all secrets and is git-ignored. Required keys:
 
@@ -47,6 +95,9 @@ python api.py true false false true false false false true   # ts-only sweep: ts
 python api.py false false false true   # skip sources, just rebuild the package
 python backup.py                       # rebuild a full master package
 ```
+
+Or pick the same run modes from the desktop app's Run tab, which shows the
+equivalent command line before it runs anything.
 
 Positional flags to `api.py` (all `true`/`false`):
 

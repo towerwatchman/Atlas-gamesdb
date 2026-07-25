@@ -13,6 +13,15 @@ export can surface them. That points at the admin write path, not the export.
 Usage:
     python diagnose_manual_links.py <atlas_id>
 """
+
+# --- run-from-anywhere bootstrap -------------------------------------------
+# Allows `python tools/diagnostics/diagnose_manual_links.py` as well as `python -m tools.diagnostics.diagnose_manual_links`.
+if __package__ in (None, ""):
+    import os as _os
+    import sys as _sys
+    _sys.path.insert(0, _os.path.abspath(
+        _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "..")))
+# ---------------------------------------------------------------------------
 import json
 import sys
 
@@ -20,11 +29,12 @@ from scraper.types.eTypes import database
 from scraper.utils.db import _run, _merge_manual_links_into_external_ids
 
 
-def main():
-    if len(sys.argv) < 2 or not sys.argv[1].isdigit():
-        print("usage: python diagnose_manual_links.py <atlas_id>")
-        return
-    atlas_id = int(sys.argv[1])
+def main(argv=None):
+    argv = list(sys.argv[1:]) if argv is None else list(argv)
+    if not argv or not str(argv[0]).strip().isdigit():
+        print("usage: diagnose_manual_links <atlas_id>")
+        return 2
+    atlas_id = int(str(argv[0]).strip())
     db_type = database.REMOTE
 
     row = _run(

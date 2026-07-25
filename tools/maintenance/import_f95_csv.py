@@ -45,6 +45,15 @@ Design notes
   ones.
 * Safe to interrupt and re-run: rows already in f95_zone are skipped.
 """
+
+# --- run-from-anywhere bootstrap -------------------------------------------
+# Allows `python tools/maintenance/import_f95_csv.py` as well as `python -m tools.maintenance.import_f95_csv`.
+if __package__ in (None, ""):
+    import os as _os
+    import sys as _sys
+    _sys.path.insert(0, _os.path.abspath(
+        _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "..")))
+# ---------------------------------------------------------------------------
 import argparse
 import csv
 import difflib
@@ -440,7 +449,7 @@ def run_import(csv_path, threshold=0.70, dry_run=False, limit=None,
         f"{skipped_match} skipped (match > {threshold:.0%}){extra}.{seq}"))
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser(description="Import F95 games from CSV into atlas/f95_zone")
     ap.add_argument("csv_path", help="path to the CSV file")
     ap.add_argument("--threshold", type=float, default=0.70,
@@ -461,7 +470,7 @@ def main():
                      help="treat sequel-looking high matches as duplicates "
                           "and skip them (no prompt, old behavior)")
     ap.set_defaults(sequel_mode="ask")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     print(dim(f"DB: {config.env_status()}"))
     try:

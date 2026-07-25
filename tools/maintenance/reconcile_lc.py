@@ -44,6 +44,15 @@ Design notes
   won't re-flag it (it'll no longer be a multi-match, or it'll already point
   at the surviving atlas_id).
 """
+
+# --- run-from-anywhere bootstrap -------------------------------------------
+# Allows `python tools/maintenance/reconcile_lc.py` as well as `python -m tools.maintenance.reconcile_lc`.
+if __package__ in (None, ""):
+    import os as _os
+    import sys as _sys
+    _sys.path.insert(0, _os.path.abspath(
+        _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "..")))
+# ---------------------------------------------------------------------------
 import argparse
 import difflib
 import json
@@ -706,7 +715,7 @@ def run_queue(kind=None):
 
 # ---------------------------------------------------------------------- main
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser(description="LewdCorner <-> atlas reconciler")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("cleanup", help="fix existing mis-linked lewdcorner rows")
@@ -733,7 +742,7 @@ def main():
                          "(0-1, default 0.55)")
     dp.add_argument("--dry-run", action="store_true",
                     help="show what would be deferred without changing the DB")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     print(dim(f"DB: {config.env_status()}"))
     try:

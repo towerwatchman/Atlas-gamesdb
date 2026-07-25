@@ -1,8 +1,14 @@
+# Runtime dependencies for the scraper itself -- api.py, backup.py,
+# f95_refresh_worker.py and everything under tools/. This is what the SERVER
+# needs; install it there with:  pip install -r requirements.txt
+#
+# NOTE: `pandas` used to be listed here but nothing in the codebase imports it,
+# so it has been removed. It pulled in numpy and added ~50MB to the Windows
+# build for no reason. If you re-introduce a pandas dependency, add it back.
 requests
 beautifulsoup4
 lxml
 mysql-connector-python
-pandas
 python-dotenv
 lz4
 deepdiff

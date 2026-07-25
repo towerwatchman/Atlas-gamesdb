@@ -7,10 +7,20 @@ than any real feed `ts`, so it looks changed every single time.
 Usage:
     python check_thread_updated.py
 """
+
+# --- run-from-anywhere bootstrap -------------------------------------------
+# Allows `python tools/diagnostics/check_thread_updates.py` as well as `python -m tools.diagnostics.check_thread_updates`.
+if __package__ in (None, ""):
+    import os as _os
+    import sys as _sys
+    _sys.path.insert(0, _os.path.abspath(
+        _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "..")))
+# ---------------------------------------------------------------------------
 from scraper.utils.db import _run
 
 
-def main():
+def main(argv=None):
+    # No arguments; accepted for a uniform entry-point signature.
     try:
         import sys
         sys.stdout.reconfigure(line_buffering=True)

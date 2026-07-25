@@ -32,6 +32,15 @@ This script NEVER writes, updates, or deletes anything. It only SELECTs.
 Use reconcile_lc.py (or a dedicated merge pass) to actually resolve what
 this surfaces.
 """
+
+# --- run-from-anywhere bootstrap -------------------------------------------
+# Allows `python tools/diagnostics/find_duplicates.py` as well as `python -m tools.diagnostics.find_duplicates`.
+if __package__ in (None, ""):
+    import os as _os
+    import sys as _sys
+    _sys.path.insert(0, _os.path.abspath(
+        _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "..")))
+# ---------------------------------------------------------------------------
 import argparse
 import csv as csvmod
 import difflib
@@ -346,7 +355,7 @@ def run(scope="all", fuzzy_floor=0.90, csv_path=None, no_fuzzy=False):
     report(exact, fuzzy, scope, csv_path=csv_path)
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser(
         description="READ-ONLY duplicate-game finder for atlas/f95_zone/lewdcorner")
     ap.add_argument("--scope", choices=["all", "f95", "lc", "cross"],
@@ -359,7 +368,7 @@ def main():
                     help="only report exact id_name duplicates (fast)")
     ap.add_argument("--csv", dest="csv_path", default=None,
                     help="also write every flagged row to this CSV file")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     print(dim(f"DB: {config.env_status()}"))
     try:

@@ -24,6 +24,15 @@ Usage:
     python cleanup_version_titles.py            # dry run -- just counts
     python cleanup_version_titles.py --apply     # actually deletes
 """
+
+# --- run-from-anywhere bootstrap -------------------------------------------
+# Allows `python tools/maintenance/cleanup_version_titles.py` as well as `python -m tools.maintenance.cleanup_version_titles`.
+if __package__ in (None, ""):
+    import os as _os
+    import sys as _sys
+    _sys.path.insert(0, _os.path.abspath(
+        _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "..")))
+# ---------------------------------------------------------------------------
 import sys
 
 from scraper.utils.db import _run
@@ -34,13 +43,14 @@ from scraper.utils.db import _run
 _BAD_TITLE_PATTERN = "%- Version:%"
 
 
-def main():
+def main(argv=None):
+    argv = list(sys.argv[1:]) if argv is None else list(argv)
     try:
         sys.stdout.reconfigure(line_buffering=True)
     except Exception:
         pass
 
-    apply = "--apply" in sys.argv
+    apply = "--apply" in argv
 
     print("Finding affected rows...", flush=True)
     rows = _run(

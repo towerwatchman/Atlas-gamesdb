@@ -16,6 +16,15 @@ Examples:
     python refresh_game.py 12345
     python refresh_game.py 12345 67890 24680
 """
+
+# --- run-from-anywhere bootstrap -------------------------------------------
+# Allows `python tools/refresh/refresh_game.py` as well as `python -m tools.refresh.refresh_game`.
+if __package__ in (None, ""):
+    import os as _os
+    import sys as _sys
+    _sys.path.insert(0, _os.path.abspath(
+        _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "..")))
+# ---------------------------------------------------------------------------
 import sys
 
 from scraper.config import config

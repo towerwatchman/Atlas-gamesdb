@@ -36,6 +36,15 @@ Usage
     python backfill_atlas_export.py --apply --all-linked
         # also bump every dlsite/sxs-linked atlas row (no timestamp to compare)
 """
+
+# --- run-from-anywhere bootstrap -------------------------------------------
+# Allows `python tools/backfill/backfill_atlas_export.py` as well as `python -m tools.backfill.backfill_atlas_export`.
+if __package__ in (None, ""):
+    import os as _os
+    import sys as _sys
+    _sys.path.insert(0, _os.path.abspath(
+        _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "..")))
+# ---------------------------------------------------------------------------
 import sys
 import time
 
@@ -99,9 +108,10 @@ def _sample():
     )
 
 
-def main():
-    apply = "--apply" in sys.argv
-    all_linked = "--all-linked" in sys.argv
+def main(argv=None):
+    argv = list(sys.argv[1:]) if argv is None else list(argv)
+    apply = "--apply" in argv
+    all_linked = "--all-linked" in argv
 
     stale = _count_stale()
     linked = _count_untimestamped_linked()

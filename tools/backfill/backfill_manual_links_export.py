@@ -21,6 +21,15 @@ Usage
     python backfill_manual_links_export.py            # dry run -- count only
     python backfill_manual_links_export.py --apply    # bump the rows
 """
+
+# --- run-from-anywhere bootstrap -------------------------------------------
+# Allows `python tools/backfill/backfill_manual_links_export.py` as well as `python -m tools.backfill.backfill_manual_links_export`.
+if __package__ in (None, ""):
+    import os as _os
+    import sys as _sys
+    _sys.path.insert(0, _os.path.abspath(
+        _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "..")))
+# ---------------------------------------------------------------------------
 import sys
 import time
 
@@ -55,8 +64,9 @@ def _sample():
     )
 
 
-def main():
-    apply = "--apply" in sys.argv
+def main(argv=None):
+    argv = list(sys.argv[1:]) if argv is None else list(argv)
+    apply = "--apply" in argv
     total = _count()
     print(f"atlas rows with manual links: {total}")
     print()

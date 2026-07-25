@@ -1,20 +1,52 @@
-# secrets & session
+# ---------------------------------------------------------------------------
+# secrets & session state -- never commit these
+# ---------------------------------------------------------------------------
 .env
+.env.*
+!.env.example
 f95_cookies.json
+lc_cookies.json
 dbCredentials.py
 config.php
 
+# deploy connection details (host, user, possibly a password)
+deploy.json
+!deploy/deploy.example.json
+
+# private keys, in case one ever gets dropped in the tree
+*.pem
+*.key
+*.ppk
+
+# ---------------------------------------------------------------------------
 # python
+# ---------------------------------------------------------------------------
 __pycache__/
 *.pyc
+*.pyo
+.pytest_cache/
+venv/
+.venv/
 
+# ---------------------------------------------------------------------------
+# desktop app build output
+# ---------------------------------------------------------------------------
+dist/
+.pyibuild/
+build/*.spec.bak
+*.manifest
+
+# ---------------------------------------------------------------------------
 # data / output
+# ---------------------------------------------------------------------------
 data.db
 *.db
 *.update
 public_html/packages/
 
-# editor
+# ---------------------------------------------------------------------------
+# editor / packaging
+# ---------------------------------------------------------------------------
 .vscode/
+.idea/
 *.zip
-lc_cookies.json

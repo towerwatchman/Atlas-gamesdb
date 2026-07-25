@@ -1,0 +1,14 @@
+# Extra dependencies for the Windows desktop app (atlas_tools) only. The server
+# does not need any of these.
+#
+#   pip install -r requirements.txt -r requirements-desktop.txt
+#
+# Tkinter is NOT listed because it ships with Python on Windows. On Linux you
+# may need it from your package manager, e.g. `apt install python3-tk`.
+-r requirements.txt
+
+# SFTP deploy (Deploy tab).
+paramiko
+
+# Only needed to BUILD the exe, not to run the app from source.
+pyinstaller

@@ -1,0 +1,1 @@
+"""Atlas game-scraper package."""

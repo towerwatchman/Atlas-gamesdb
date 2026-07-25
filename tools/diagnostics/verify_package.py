@@ -12,6 +12,15 @@ Usage:
     python verify_package.py <atlas_id>
     python verify_package.py <atlas_id> /explicit/package/dir   # override
 """
+
+# --- run-from-anywhere bootstrap -------------------------------------------
+# Allows `python tools/diagnostics/verify_package.py` as well as `python -m tools.diagnostics.verify_package`.
+if __package__ in (None, ""):
+    import os as _os
+    import sys as _sys
+    _sys.path.insert(0, _os.path.abspath(
+        _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "..")))
+# ---------------------------------------------------------------------------
 import glob
 import json
 import os
@@ -27,12 +36,13 @@ except Exception:
         "PACKAGE_DIR_REMOTE", "/var/www/html/packages")
 
 
-def main():
-    if len(sys.argv) < 2 or not sys.argv[1].isdigit():
-        print("usage: python verify_package.py <atlas_id> [package_dir]")
-        return
-    atlas_id = int(sys.argv[1])
-    pkg_dir = sys.argv[2] if len(sys.argv) > 2 else _DEFAULT_DIR
+def main(argv=None):
+    argv = list(sys.argv[1:]) if argv is None else list(argv)
+    if not argv or not str(argv[0]).strip().isdigit():
+        print("usage: verify_package <atlas_id> [package_dir]")
+        return 2
+    atlas_id = int(str(argv[0]).strip())
+    pkg_dir = argv[1] if len(argv) > 1 and argv[1] else _DEFAULT_DIR
 
     print(f"package dir : {pkg_dir}")
     if not os.path.isdir(pkg_dir):

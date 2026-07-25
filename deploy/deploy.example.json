@@ -1,0 +1,73 @@
+{
+  "env_file": "",
+  "connection": {
+    "host": "atlas-gamesdb.com",
+    "port": 22,
+    "user": "root",
+    "auth": "key",
+    "key_path": "~/.ssh/id_ed25519",
+    "password": ""
+  },
+  "options": {
+    "skip_unchanged": true,
+    "atomic": true
+  },
+  "targets": {
+    "python": {
+      "label": "Python scraper",
+      "enabled": true,
+      "local": ".",
+      "remote": "/opt/atlas-scraper",
+      "include": [
+        "api.py",
+        "backup.py",
+        "f95_refresh_worker.py",
+        "requirements.txt",
+        ".env.example",
+        "scraper/**/*.py",
+        "tools/**/*.py"
+      ],
+      "exclude": [
+        "**/__pycache__/**",
+        "**/*.pyc",
+        "scraper/fixtures/**",
+        "atlas_tools/**",
+        "build/**"
+      ],
+      "env_files": [
+        ".env"
+      ],
+      "post_commands": []
+    },
+    "node": {
+      "label": "Node admin server",
+      "enabled": true,
+      "local": "server/admin",
+      "remote": "/opt/atlas/server/admin",
+      "include": [
+        "package.json",
+        "sql/**/*.sql",
+        "server/package.json",
+        "server/src/**",
+        "web/package.json",
+        "web/index.html",
+        "web/vite.config.js",
+        "web/src/**",
+        "web/public/**"
+      ],
+      "exclude": [
+        "**/node_modules/**",
+        "server/public/assets/**",
+        "**/.env"
+      ],
+      "env_files": [
+        "server/.env"
+      ],
+      "post_commands": [
+        "cd /opt/atlas/server/admin && npm install",
+        "cd /opt/atlas/server/admin && npm run build",
+        "pm2 restart atlas"
+      ]
+    }
+  }
+}

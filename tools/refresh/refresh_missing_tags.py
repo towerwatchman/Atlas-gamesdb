@@ -19,6 +19,15 @@ Usage:
     --limit N   only process the first N games missing tags (default: all)
     --dry-run   just list the games that WOULD be refreshed, fetch nothing
 """
+
+# --- run-from-anywhere bootstrap -------------------------------------------
+# Allows `python tools/refresh/refresh_missing_tags.py` as well as `python -m tools.refresh.refresh_missing_tags`.
+if __package__ in (None, ""):
+    import os as _os
+    import sys as _sys
+    _sys.path.insert(0, _os.path.abspath(
+        _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "..")))
+# ---------------------------------------------------------------------------
 import sys
 
 from scraper.config import config

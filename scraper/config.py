@@ -6,17 +6,45 @@ which are loaded from a local .env file that is NOT committed to the repo.
 See .env.example for the required keys.
 """
 import os
+import sys
 
 from scraper.types.eTypes import database
 
+
+def app_root():
+    """Directory that .env / cookie files / relative paths resolve against.
+
+    * normal checkout -> the project root (one level above this package)
+    * PyInstaller exe -> the folder containing the .exe, NOT the temporary
+      _MEIPASS extraction dir, so a user can drop a .env next to the exe and
+      edit it without rebuilding.
+    """
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _resolve(path):
+    """Absolutise a possibly-relative path against app_root()."""
+    if not path:
+        return path
+    path = os.path.expanduser(path)
+    if os.path.isabs(path):
+        return path
+    return os.path.join(app_root(), path)
+
+
 _ENV_STATUS = "no-dotenv (python-dotenv not installed)"
+_ENV_PATH = None
 try:
     from dotenv import load_dotenv
-    # Load .env from the project root (two levels up from this file).
-    _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    _env_path = os.path.join(_root, ".env")
+    # Load .env from the app root. ATLAS_ENV_FILE overrides it outright, which
+    # is how the GUI points at a .env somewhere else.
+    _env_path = os.environ.get("ATLAS_ENV_FILE") or os.path.join(app_root(), ".env")
+    _env_path = os.path.abspath(os.path.expanduser(_env_path))
     if os.path.exists(_env_path):
         load_dotenv(_env_path)
+        _ENV_PATH = _env_path
         _ENV_STATUS = f"loaded {_env_path}"
     else:
         _ENV_STATUS = f"NO .env FOUND at {_env_path}"
@@ -94,10 +122,21 @@ class config:
         return _require("F95_PASSWORD")
 
     @staticmethod
+    def env_file():
+        """Absolute path of the .env that was loaded, or None."""
+        return _ENV_PATH
+
+    @staticmethod
+    def app_root():
+        return app_root()
+
+    @staticmethod
     def f95_cookie_file():
         # Where the persisted session cookie is stored (kept out of the repo).
-        _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        return os.environ.get("F95_COOKIE_FILE", os.path.join(_root, "f95_cookies.json"))
+        # A relative F95_COOKIE_FILE resolves against the app root, not the
+        # current working directory -- otherwise the cookie lands wherever the
+        # process happened to be started from and gets re-created every run.
+        return _resolve(os.environ.get("F95_COOKIE_FILE") or "f95_cookies.json")
 
     # ----- LewdCorner login (dummy account) -----
     # LewdCorner is XenForo, same as F95, so the auth model is identical:
@@ -113,8 +152,7 @@ class config:
 
     @staticmethod
     def lc_cookie_file():
-        _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        return os.environ.get("LC_COOKIE_FILE", os.path.join(_root, "lc_cookies.json"))
+        return _resolve(os.environ.get("LC_COOKIE_FILE") or "lc_cookies.json")
 
     # ----- Output -----
     @staticmethod

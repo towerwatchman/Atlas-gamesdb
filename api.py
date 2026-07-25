@@ -26,21 +26,23 @@ from scraper.auth import LCSession
 from scraper.agents.lewdcorner import lewdcorner
 
 
-def _flag(idx, default):
-    if len(sys.argv) > idx:
-        return sys.argv[idx].lower() == "true"
+def _flag(argv, idx, default):
+    # idx is 1-based to match the historical positional CLI.
+    if len(argv) >= idx:
+        return argv[idx - 1].lower() == "true"
     return default
 
 
-def main():
-    f95_enable = _flag(1, True)
-    f95_full = _flag(2, False)          # re-fetch detail for every thread
-    dlsite_enable = _flag(3, False)
-    create_package = _flag(4, True)
-    lc_enable = _flag(5, False)         # LewdCorner feed scrape
-    lc_full = _flag(6, False)           # walk every feed page (vs. stop-early)
-    f95_new_only = _flag(7, False)      # API-only sweep: new/missing games only
-    f95_ts_only = _flag(8, False)       # pure API sweep: ts/listing fields only,
+def main(argv=None):
+    argv = list(sys.argv[1:]) if argv is None else list(argv)
+    f95_enable = _flag(argv, 1, True)
+    f95_full = _flag(argv, 2, False)          # re-fetch detail for every thread
+    dlsite_enable = _flag(argv, 3, False)
+    create_package = _flag(argv, 4, True)
+    lc_enable = _flag(argv, 5, False)         # LewdCorner feed scrape
+    lc_full = _flag(argv, 6, False)           # walk every feed page (vs. stop-early)
+    f95_new_only = _flag(argv, 7, False)      # API-only sweep: new/missing games only
+    f95_ts_only = _flag(argv, 8, False)       # pure API sweep: ts/listing fields only,
                                          # never opens a detail page
 
     start_time = time.time()
@@ -74,7 +76,8 @@ def main():
         packager.createPackage(db_type, start_time)
 
     print("All updates complete")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -31,6 +31,15 @@ Usage
         # linked lewdcorner row's (the ones actually at risk of being missed),
         # rather than every linked atlas row.
 """
+
+# --- run-from-anywhere bootstrap -------------------------------------------
+# Allows `python tools/backfill/backfill_lc_atlas_export.py` as well as `python -m tools.backfill.backfill_lc_atlas_export`.
+if __package__ in (None, ""):
+    import os as _os
+    import sys as _sys
+    _sys.path.insert(0, _os.path.abspath(
+        _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "..")))
+# ---------------------------------------------------------------------------
 import sys
 import time
 
@@ -73,9 +82,10 @@ def _sample(stale_only, limit=10):
     )
 
 
-def main():
-    apply = "--apply" in sys.argv
-    stale_only = "--stale-only" in sys.argv
+def main(argv=None):
+    argv = list(sys.argv[1:]) if argv is None else list(argv)
+    apply = "--apply" in argv
+    stale_only = "--stale-only" in argv
 
     linked = _count_linked()
     stale = _count_stale()
