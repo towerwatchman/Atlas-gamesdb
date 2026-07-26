@@ -21,7 +21,8 @@ export const env = {
   DB_NAME: process.env.DB_NAME || 'games',
 
   JWT_SECRET: req('JWT_SECRET'),
-  SESSION_HOURS: Number(process.env.SESSION_HOURS || 12),
+  // One week (issue #281). Was 12h, which logged admins out mid-session.
+  SESSION_HOURS: Number(process.env.SESSION_HOURS || 168),
 
   PORT: Number(process.env.PORT || 8787),
   CORS_ORIGINS: (process.env.CORS_ORIGINS || '')

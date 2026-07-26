@@ -25,9 +25,51 @@ connection** — it reports whether each remote folder exists.
 
 ## Configuration
 
-`deploy.json` sits next to the exe (or at the project root) and is git-ignored
-because it holds a host, a username and possibly a password.
-`deploy/deploy.example.json` is the committed template.
+Settings come from three layers, later ones winning:
+
+1. built-in defaults
+2. `deploy.json` (next to the exe / at the project root, git-ignored)
+3. `.env`, and real environment variables, which beat the `.env` file
+
+### Recommended: put the connection in `.env`
+
+```ini
+SFTP_HOST=atlas-gamesdb.com
+SFTP_PORT=22
+SFTP_USER=deployer
+SFTP_PASSWORD=...            # or leave blank and set SFTP_KEY_PATH
+SFTP_KEY_PATH=~/.ssh/id_ed25519
+SCRAPER_DIR=/opt/atlas-scraper
+ADMIN_SERVER_DIR=/opt/atlas/server/admin
+```
+
+That is enough on its own — the Deploy tab works with no `deploy.json` present at
+all. It also keeps the SFTP password out of a second file: **values supplied by
+`.env` are never written into `deploy.json`**, they're blanked on save.
+
+Setting `SFTP_PASSWORD` with no `SFTP_KEY_PATH` selects password auth
+automatically. Override with `SFTP_AUTH=key|password` if you need to.
+
+Fields that `.env` controls are shown **read-only** on the Settings tab, labelled
+`from .env (SFTP_HOST)`, with a green summary line at the top saying how many
+came from where. Editing them in the app would achieve nothing, since `.env` wins
+on every load, so the app doesn't pretend otherwise. Change them in `.env` and
+press **Reload from .env / disk** — no restart needed.
+
+Anything `.env` doesn't set stays editable in the app and is saved to
+`deploy.json` as normal: the include/exclude patterns, local folders,
+post-deploy commands, and the two upload options.
+
+> If you edit fields on the Settings tab, press **Save**. The footer with Save
+> and Reload is pinned below the scroll area precisely so it can't be missed —
+> the field list is far taller than the visible panel.
+
+
+### deploy.json
+
+Still used for everything `.env` doesn't cover. It sits next to the exe (or at
+the project root), is git-ignored, and `deploy/deploy.example.json` is the
+committed template.
 
 ```jsonc
 {

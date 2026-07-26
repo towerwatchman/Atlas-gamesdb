@@ -2,6 +2,89 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { api, fmtTime } from '../lib/api.js';
 import { Notice, Modal, Spinner, Highlight, SourceUrlLink, SourceLinkList } from '../components/ui.jsx';
 
+/**
+ * Map to an atlas game by typing its id (issue #276).
+ *
+ * The auto-detected candidates only cover what the matcher found; when it finds
+ * nothing (or the right game isn't offered) the only options used to be "add as
+ * new" or "dismiss", both of which are wrong if the game IS already in the
+ * atlas. This looks the id up first and shows what it is, so a typo can't
+ * silently attach the thread to an unrelated game.
+ */
+function ManualMapById({ lcId, onSelect, selected }) {
+  const [value, setValue] = useState('');
+  const [found, setFound] = useState(null);
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function look() {
+    setErr(''); setFound(null); setBusy(true);
+    try {
+      const row = await api.get(`/api/queue/atlas-lookup/${encodeURIComponent(value.trim())}`);
+      setFound(row);
+      // Selecting it here means the modal's existing "Link to selected" button
+      // does the linking, so there's one code path for it.
+      onSelect(row.atlas_id);
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="panel panel-pad" style={{ marginTop: 14, background: 'var(--panel-2)' }}>
+      <h3 style={{ fontSize: 14, margin: '0 0 4px', color: 'var(--muted)' }}>
+        Or map to a specific atlas id
+      </h3>
+      <p className="hint" style={{ marginBottom: 8 }}>
+        Paste an atlas_id if you already know which game this is.
+      </p>
+      <form
+        className="row"
+        onSubmit={(e) => { e.preventDefault(); if (value.trim()) look(); }}
+      >
+        <input
+          placeholder="atlas_id"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          style={{ flex: '0 1 140px' }}
+          inputMode="numeric"
+        />
+        <button className="btn btn-sm" type="submit" disabled={busy || !value.trim()}>
+          {busy ? 'Looking up…' : 'Look up'}
+        </button>
+      </form>
+
+      {err && <p className="hint" style={{ color: 'var(--danger, #f88)', marginTop: 8 }}>{err}</p>}
+
+      {found && (
+        <div className={`cand ${selected === found.atlas_id ? 'chosen' : ''}`} style={{ marginTop: 10 }}>
+          <div className="cand-top">
+            <span className="cand-title">#{found.atlas_id} · {found.title}</span>
+            <span>
+              {found._links && found._links.length
+                ? <SourceLinkList links={found._links} />
+                : <span className="orphan">no sources</span>}
+            </span>
+          </div>
+          <div className="kv">
+            <span className="k">creator</span><span>{found.creator || '—'}</span>
+            <span className="k">version</span><span>{found.version || '—'}</span>
+            <span className="k">id_name</span><span className="mono">{found.id_name}</span>
+          </div>
+          {found._has_lc ? (
+            <p className="hint" style={{ color: 'var(--danger, #f88)', margin: '6px 0 0' }}>
+              This game already has a LewdCorner mapping. lewdcorner.atlas_id is
+              unique, so linking here will fail — resolve that mapping first.
+            </p>
+          ) : (
+            <p className="hint" style={{ margin: '6px 0 0' }}>
+              Selected. Use “Link to selected” below to map thread {lcId} to it.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ResolveModal({ lcId, onClose, onDone }) {
   const [data, setData] = useState(null);
   const [chosen, setChosen] = useState(null);
@@ -79,6 +162,8 @@ function ResolveModal({ lcId, onClose, onDone }) {
               </div>
             </label>
           ))}
+
+          <ManualMapById lcId={lcId} onSelect={setChosen} selected={chosen} />
         </>
       )}
     </Modal>

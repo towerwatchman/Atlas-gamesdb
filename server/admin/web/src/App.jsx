@@ -10,6 +10,7 @@ import Queue from './pages/Queue.jsx';
 import F95Refresh from './pages/F95Refresh.jsx';
 import Admins from './pages/Admins.jsx';
 import Changelog from './pages/Changelog.jsx';
+import AdminActivity from './pages/AdminActivity.jsx';
 import { Spinner } from './components/ui.jsx';
 
 function TopBar({ user, onLogout }) {
@@ -20,6 +21,7 @@ function TopBar({ user, onLogout }) {
     ['/admin/queue', 'Review queue'],
     ['/admin/f95-refresh', 'F95 refresh'],
     ['/admin/changelog', 'Changelog'],
+    ['/admin/activity', 'Admin activity'],
     ['/admin/admins', 'Admins'],
   ];
   return (
@@ -81,6 +83,7 @@ function AdminApp() {
           <Route path="/queue" element={<Queue />} />
           <Route path="/f95-refresh" element={<F95Refresh />} />
           <Route path="/changelog" element={<Changelog />} />
+          <Route path="/activity" element={<AdminActivity />} />
           <Route path="/admins" element={<Admins me={user} />} />
           <Route path="*" element={<Navigate to="/admin/home" replace />} />
         </Routes>

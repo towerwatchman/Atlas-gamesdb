@@ -18,7 +18,7 @@ import { logAudit } from './atlas.js';
 // Sources that support floating (migration 002 relaxed these two). dlsite/sxs
 // still have NOT NULL/UNIQUE atlas_id, so they can be relinked but not floated
 // until migration 002 is extended to them.
-const SOURCE_TABLES = [
+export const SOURCE_TABLES = [
   { table: 'f95_zone', idCol: 'f95_id', floatable: true },
   { table: 'lewdcorner', idCol: 'lc_id', floatable: true },
   { table: 'dlsite', idCol: 'dlsite_id', floatable: false },

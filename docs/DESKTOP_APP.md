@@ -49,6 +49,21 @@ wherever your shell's working directory happened to be.
 Point it somewhere else with the `.env file` box on the Settings tab, or the
 `ATLAS_ENV_FILE` environment variable.
 
+## Where settings come from
+
+Deploy settings are read from built-in defaults, then `deploy.json`, then `.env`
+(and real environment variables, which beat the file). `.env` is the recommended
+place for the connection details:
+
+```ini
+SFTP_HOST=        SFTP_USER=          SFTP_PASSWORD=      SFTP_KEY_PATH=
+SCRAPER_DIR=      ADMIN_SERVER_DIR=
+```
+
+Anything `.env` sets is shown read-only on the Settings tab and marked
+`from .env (VAR)`, and is never copied into `deploy.json`. Press **Reload from
+.env / disk** after editing `.env`; no restart needed. See docs/DEPLOY.md.
+
 ## The Run tab
 
 Pick a tool on the left, fill in the form, press Run. The green line above the

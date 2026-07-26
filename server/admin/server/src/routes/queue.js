@@ -6,6 +6,7 @@ import {
 } from '../lib/queue.js';
 import { getAtlasRowsByIds } from '../lib/candidates.js';
 import { getSourceOwners, getSourceIds, getSourceLinks } from '../lib/merge.js';
+import { getAtlasRow } from '../lib/atlas.js';
 
 const router = safeRouter(express.Router());
 
@@ -34,6 +35,33 @@ router.get('/:lcId', async (req, res) => {
   // preserve candidate ordering
   candidates.sort((a, b) => candIds.indexOf(a.atlas_id) - candIds.indexOf(b.atlas_id));
   res.json({ item, candidates });
+});
+
+// GET /api/queue/atlas-lookup/:atlasId
+// Backs the "map by atlas id" input (issue #276): confirm the id exists and show
+// what it is BEFORE linking, so a typo doesn't silently attach a LewdCorner
+// thread to an unrelated game. Linking itself still goes through
+// POST /:lcId/link, which is unchanged.
+router.get('/atlas-lookup/:atlasId', async (req, res) => {
+  const id = Number(req.params.atlasId);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'Enter a positive whole atlas id.' });
+  }
+  const row = await getAtlasRow(id);
+  if (!row) return res.status(404).json({ error: `No atlas row #${id}.` });
+  const owners = await getSourceOwners(id);
+  const sources = await getSourceIds(id);
+  const links = await getSourceLinks(id);
+  // An atlas row that already owns a LewdCorner mapping cannot take another:
+  // lewdcorner.atlas_id is UNIQUE, so the insert would fail. Flag it up front
+  // rather than letting the link attempt blow up.
+  res.json({
+    ...row,
+    _owners: owners,
+    _sources: sources,
+    _links: links,
+    _has_lc: owners.includes('lewdcorner'),
+  });
 });
 
 router.post('/:lcId/link', async (req, res) => {

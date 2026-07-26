@@ -26,6 +26,7 @@ import queueRoutes from './routes/queue.js';
 import f95RefreshRoutes from './routes/f95Refresh.js';
 import statsRoutes from './routes/stats.js';
 import changelogRoutes from './routes/changelog.js';
+import adminActivityRoutes from './routes/adminActivity.js';
 import updatesRoutes from './routes/updates.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -62,6 +63,7 @@ app.use('/admin/api/duplicates', requireAuth, duplicateRoutes);
 app.use('/admin/api/queue', requireAuth, queueRoutes);
 app.use('/admin/api/f95-refresh', requireAuth, f95RefreshRoutes);
 app.use('/admin/api/stats', requireAuth, statsRoutes);
+app.use('/admin/api/admin-activity', requireAuth, adminActivityRoutes);
 app.use('/admin/api/changelog', requireAuth, changelogRoutes);
 
 // --- Static React app + SPA fallback ---------------------------------------

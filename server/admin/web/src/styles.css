@@ -217,3 +217,20 @@ tbody tr.row-deferred:hover td { opacity: 1; }
 .cl-user  { background: rgba(224,120,120,0.12); color: #e69595; border-color: rgba(224,120,120,0.3); }
 .cl-other { background: var(--panel-2); color: var(--muted); border-color: var(--hair); }
 .pager { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 14px; }
+
+/* --- edit modal: fields left, mapped sources right (issue #286) -----------
+   Two columns on a wide screen, stacked on a narrow one. The aside is sticky so
+   the source ids stay visible while scrolling a long field list. */
+.edit-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 380px);
+  gap: 16px;
+  align-items: start;
+}
+.edit-main { min-width: 0; }
+.edit-aside { position: sticky; top: 0; min-width: 0; }
+
+@media (max-width: 1100px) {
+  .edit-split { grid-template-columns: minmax(0, 1fr); }
+  .edit-aside { position: static; }
+}

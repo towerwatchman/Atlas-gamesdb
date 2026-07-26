@@ -11,6 +11,7 @@ Everything that blocks -- a task, a deploy -- happens off the Tk thread and
 reports back through a queue that ``_drain`` empties on a timer. Only one
 operation runs at a time, so the log always reads as a single story.
 """
+import copy
 import os
 import queue
 import sys
@@ -91,6 +92,10 @@ class App(ttk.Frame):
         self.current_task = None
         self._selecting = False
         self._drain_id = None
+        self._env_sources = {}
+        self._target_labels = {}
+        self._dirty = False
+        self._building_settings = False
 
         try:
             self.settings = settings.load()
@@ -208,7 +213,7 @@ class App(ttk.Frame):
                             variable=var).pack(side="left")
             lbl = ttk.Label(row, foreground="#555", font=("Courier", 9))
             lbl.pack(side="left", padx=(PAD, 0))
-            target["_pathlabel"] = lbl
+            self._target_labels[key] = lbl
             self._refresh_target_label(key)
 
         opts = ttk.LabelFrame(tab, text="This run", padding=PAD)
@@ -243,8 +248,8 @@ class App(ttk.Frame):
         return tab
 
     def _refresh_target_label(self, key):
-        target = self.settings["targets"][key]
-        lbl = target.get("_pathlabel")
+        target = self.settings["targets"].get(key) or {}
+        lbl = self._target_labels.get(key)
         if lbl is not None:
             lbl.configure(
                 text=f"{target.get('local') or '.'}  ->  {target.get('remote') or '(no remote set)'}")
@@ -309,20 +314,84 @@ class App(ttk.Frame):
             widget.bind("<Enter>", lambda _e: canvas.bind_all("<MouseWheel>", on_wheel))
             widget.bind("<Leave>", lambda _e: canvas.unbind_all("<MouseWheel>"))
 
+        self._settings_canvas = canvas
+        self._settings_fields_frame = tab
+        self._build_settings_fields(tab)
+
+        # --- footer, OUTSIDE the scroll area ---------------------------------
+        # It lives here rather than at the bottom of the scrolling frame because
+        # the field list is ~1270px tall in a ~435px viewport: a Save button
+        # inside the canvas sits about 800px below the fold, so edits get made
+        # and never saved. An always-visible footer is the whole point.
+        footer = ttk.Frame(outer, padding=(0, PAD, 0, 0))
+        footer.grid(row=1, column=0, columnspan=2, sticky="ew")
+        footer.columnconfigure(2, weight=1)
+        ttk.Button(footer, text="Save", command=self._save_settings).grid(
+            row=0, column=0)
+        ttk.Button(footer, text="Reload from .env / disk",
+                   command=self._reload_settings).grid(row=0, column=1,
+                                                       padx=(PAD, 0))
+        self.settings_status = ttk.Label(footer, text="", foreground="#a05000")
+        self.settings_status.grid(row=0, column=2, sticky="w", padx=(PAD, 0))
+        ttk.Label(footer, foreground="#777",
+                  text=os.path.basename(settings.path())).grid(
+            row=0, column=3, sticky="e")
+        return outer
+
+    def _build_settings_fields(self, tab):
+        """Build the field list. Called again by Reload to rebuild in place."""
+        self._building_settings = True
+        try:
+            self._build_settings_fields_inner(tab)
+        finally:
+            self._building_settings = False
+        self._dirty = False
+        self._refresh_settings_status()
+
+    def _build_settings_fields_inner(self, tab):
+        for child in tab.winfo_children():
+            child.destroy()
         tab.columnconfigure(1, weight=1)
         self.s_vars = {}
+        self._dirty = False
+        self._env_sources = settings.env_sources(self.settings)
         r = 0
 
+        if self._env_sources:
+            env_file = settings.env_path(self.settings)
+            box = ttk.Frame(tab)
+            box.grid(row=r, column=0, columnspan=3, sticky="ew", pady=(0, PAD))
+            ttk.Label(box, foreground="#060",
+                      text=f"{len(self._env_sources)} setting(s) come from "
+                           f"{env_file}").pack(anchor="w")
+            ttk.Label(box, foreground="#777", wraplength=620, justify="left",
+                      text="Those fields are shown read-only here -- .env wins "
+                           "on every load, so editing them in the app would do "
+                           "nothing. Change them in .env and press Reload."
+                      ).pack(anchor="w")
+            r += 1
+        else:
+            ttk.Label(tab, foreground="#777", wraplength=620, justify="left",
+                      text=("Tip: SFTP_HOST, SFTP_USER, SFTP_PASSWORD, "
+                            "SFTP_KEY_PATH, SCRAPER_DIR and ADMIN_SERVER_DIR can "
+                            "be set in .env instead of here.")
+                      ).grid(row=r, column=0, columnspan=3, sticky="ew",
+                             pady=(0, PAD))
+            r += 1
+
         ttk.Label(tab, text="Environment", font=("", 11, "bold")).grid(
-            row=r, column=0, columnspan=3, sticky="w", pady=(0, 4)); r += 1
+            row=r, column=0, columnspan=3, sticky="w", pady=(0, 4))
+        r += 1
         r = self._setting_row(tab, r, "env_file", ".env file",
                               self.settings.get("env_file", ""), kind=FILE,
                               hint="Blank = the .env sitting next to this app.")
 
         ttk.Separator(tab, orient="horizontal").grid(
-            row=r, column=0, columnspan=3, sticky="ew", pady=PAD); r += 1
+            row=r, column=0, columnspan=3, sticky="ew", pady=PAD)
+        r += 1
         ttk.Label(tab, text="SSH connection", font=("", 11, "bold")).grid(
-            row=r, column=0, columnspan=3, sticky="w", pady=(0, 4)); r += 1
+            row=r, column=0, columnspan=3, sticky="w", pady=(0, 4))
+        r += 1
 
         conn = self.settings["connection"]
         r = self._setting_row(tab, r, "connection.host", "Host", conn.get("host", ""))
@@ -331,81 +400,104 @@ class App(ttk.Frame):
                               conn.get("user", ""))
         auth = tk.StringVar(value=conn.get("auth", "key"))
         self.s_vars["connection.auth"] = auth
+        auth.trace_add("write", lambda *_a: self._mark_dirty())
         ttk.Label(tab, text="Auth").grid(row=r, column=0, sticky="w", pady=2)
         arow = ttk.Frame(tab)
         arow.grid(row=r, column=1, columnspan=2, sticky="w")
+        env_auth = "connection.auth" in self._env_sources
+        state = "disabled" if env_auth else "normal"
         ttk.Radiobutton(arow, text="SSH key / agent", variable=auth,
-                        value="key").pack(side="left")
+                        value="key", state=state).pack(side="left")
         ttk.Radiobutton(arow, text="Password", variable=auth,
-                        value="password").pack(side="left", padx=(PAD, 0))
+                        value="password", state=state).pack(side="left",
+                                                            padx=(PAD, 0))
+        if env_auth:
+            ttk.Label(arow, foreground="#060",
+                      text=f"  from .env ({self._env_sources['connection.auth']})"
+                      ).pack(side="left")
         r += 1
         r = self._setting_row(tab, r, "connection.key_path", "Private key",
                               conn.get("key_path", ""), kind=FILE)
         r = self._setting_row(tab, r, "connection.password", "Password",
                               conn.get("password", ""), secret=True,
-                              hint="Stored in plain text in deploy.json. Prefer a key.")
+                              hint="Prefer SFTP_PASSWORD in .env, or a key.")
 
         opts = self.settings["options"]
         skip = tk.BooleanVar(value=bool(opts.get("skip_unchanged", True)))
         atomic = tk.BooleanVar(value=bool(opts.get("atomic", True)))
         self.s_vars["options.skip_unchanged"] = skip
         self.s_vars["options.atomic"] = atomic
+        for var in (skip, atomic):
+            var.trace_add("write", lambda *_a: self._mark_dirty())
         ttk.Checkbutton(tab, text="Skip files whose size and mtime already match",
-                        variable=skip).grid(row=r, column=1, sticky="w"); r += 1
+                        variable=skip).grid(row=r, column=1, sticky="w")
+        r += 1
         ttk.Checkbutton(tab, text="Upload to a temp name, then rename into place",
-                        variable=atomic).grid(row=r, column=1, sticky="w"); r += 1
+                        variable=atomic).grid(row=r, column=1, sticky="w")
+        r += 1
 
         for key, target in self.settings["targets"].items():
             ttk.Separator(tab, orient="horizontal").grid(
-                row=r, column=0, columnspan=3, sticky="ew", pady=PAD); r += 1
+                row=r, column=0, columnspan=3, sticky="ew", pady=PAD)
+            r += 1
             ttk.Label(tab, text=f"Target: {target.get('label', key)}",
                       font=("", 11, "bold")).grid(
-                row=r, column=0, columnspan=3, sticky="w", pady=(0, 4)); r += 1
+                row=r, column=0, columnspan=3, sticky="w", pady=(0, 4))
+            r += 1
             r = self._setting_row(tab, r, f"targets.{key}.local", "Local folder",
                                   target.get("local", ""), kind=DIR,
                                   hint="Relative to this app's folder.")
             r = self._setting_row(tab, r, f"targets.{key}.remote", "Remote folder",
                                   target.get("remote", ""))
             r = self._setting_multiline(tab, r, f"targets.{key}.include",
-                                        "Include patterns",
-                                        target.get("include", []), height=6)
+                                       "Include patterns",
+                                       target.get("include", []), height=6)
             r = self._setting_multiline(tab, r, f"targets.{key}.exclude",
-                                        "Exclude patterns",
-                                        target.get("exclude", []), height=4)
+                                       "Exclude patterns",
+                                       target.get("exclude", []), height=4)
             r = self._setting_multiline(tab, r, f"targets.{key}.env_files",
-                                        ".env files",
-                                        target.get("env_files", []), height=2,
-                                        hint="Only uploaded when you tick the box on the Deploy tab.")
+                                       ".env files",
+                                       target.get("env_files", []), height=2,
+                                       hint="Only uploaded when you tick the box on the Deploy tab.")
             r = self._setting_multiline(tab, r, f"targets.{key}.post_commands",
-                                        "Post-deploy commands",
-                                        target.get("post_commands", []), height=4,
-                                        hint="One per line, run in order over SSH.")
+                                       "Post-deploy commands",
+                                       target.get("post_commands", []), height=4,
+                                       hint="One per line, run in order over SSH.")
 
-        row = ttk.Frame(tab)
-        row.grid(row=r, column=0, columnspan=3, sticky="w", pady=(PAD * 2, 0))
-        ttk.Button(row, text="Save", command=self._save_settings).pack(side="left")
-        ttk.Button(row, text="Reload from disk",
-                   command=self._reload_settings).pack(side="left", padx=(PAD, 0))
-        ttk.Label(row, foreground="#555",
-                  text=f"  ({settings.path()})").pack(side="left")
-        return outer
+    def _mark_dirty(self, *_args):
+        if getattr(self, "_building_settings", False):
+            return
+        self._dirty = True
+        self._refresh_settings_status()
+
+    def _refresh_settings_status(self):
+        if not hasattr(self, "settings_status"):
+            return
+        self.settings_status.configure(
+            text="unsaved changes -- press Save" if getattr(self, "_dirty", False)
+            else "")
 
     def _setting_row(self, tab, r, key, label, value, kind=TEXT, secret=False,
                      hint=""):
+        env_var = self._env_sources.get(key)
         ttk.Label(tab, text=label).grid(row=r, column=0, sticky="w", pady=2)
         var = tk.StringVar(value="" if value is None else str(value))
         self.s_vars[key] = var
-        entry = ttk.Entry(tab, textvariable=var,
-                          show="*" if secret else "")
+        var.trace_add("write", lambda *_a: self._mark_dirty())
+        entry = ttk.Entry(tab, textvariable=var, show="*" if secret else "",
+                          state="readonly" if env_var else "normal")
         entry.grid(row=r, column=1, sticky="ew", pady=2)
-        if kind in (FILE, DIR):
+        if kind in (FILE, DIR) and not env_var:
             ttk.Button(tab, text="...", width=3,
                        command=lambda v=var, k=kind: self._browse(v, k)).grid(
                 row=r, column=2, sticky="w", padx=(4, 0))
         r += 1
-        if hint:
-            ttk.Label(tab, text=hint, foreground="#777").grid(
-                row=r, column=1, sticky="w"); r += 1
+        note = f"from .env ({env_var})" if env_var else hint
+        if note:
+            ttk.Label(tab, text=note,
+                      foreground="#060" if env_var else "#777").grid(
+                row=r, column=1, sticky="w")
+            r += 1
         return r
 
     def _setting_multiline(self, tab, r, key, label, value, height=4, hint=""):
@@ -413,11 +505,13 @@ class App(ttk.Frame):
         text = tk.Text(tab, height=height, wrap="none", font=("Courier", 9))
         text.insert("1.0", "\n".join(value or []))
         text.grid(row=r, column=1, columnspan=2, sticky="ew", pady=2)
+        text.bind("<KeyRelease>", self._mark_dirty)
         self.s_vars[key] = text
         r += 1
         if hint:
             ttk.Label(tab, text=hint, foreground="#777").grid(
-                row=r, column=1, sticky="w"); r += 1
+                row=r, column=1, sticky="w")
+            r += 1
         return r
 
     def _browse(self, var, kind):
@@ -768,15 +862,21 @@ class App(ttk.Frame):
 
     # --------------------------------------------------------------- settings
     def _collect_settings(self):
-        data = settings.load() if os.path.exists(settings.path()) else \
-            dict(self.settings)
-        data = {k: v for k, v in self.settings.items() if k != "targets"}
+        # Deep-copied so that editing the form can't mutate self.settings in
+        # place -- these are nested dicts, and a shallow copy shares
+        # `connection` and `options` with the live settings.
+        data = {k: copy.deepcopy(v) for k, v in self.settings.items()
+                if k != "targets"}
         data["targets"] = {}
         for key, target in self.settings["targets"].items():
             data["targets"][key] = {
-                k: v for k, v in target.items() if not k.startswith("_")}
+                k: copy.deepcopy(v) for k, v in target.items()}
 
         for key, widget in self.s_vars.items():
+            # Env-controlled fields are read-only in the form; writing them back
+            # would just store a copy of the .env value in deploy.json.
+            if key in self._env_sources:
+                continue
             if isinstance(widget, tk.Text):
                 value = [ln.strip() for ln in
                          widget.get("1.0", "end").splitlines() if ln.strip()]
@@ -802,25 +902,41 @@ class App(ttk.Frame):
     def _save_settings(self):
         try:
             data = self._collect_settings()
-            path = settings.save(data)
+            path = settings.save(data, env_controlled=self._env_sources)
         except Exception as exc:
-            messagebox.showerror("Save failed", str(exc))
+            messagebox.showerror(
+                "Save failed",
+                f"{exc}\n\nTried to write:\n{settings.path()}")
             return
-        labels = {k: self.settings["targets"][k].get("_pathlabel")
-                  for k in self.settings["targets"]}
         self.settings = data
-        for k, lbl in labels.items():
-            if k in self.settings["targets"]:
-                self.settings["targets"][k]["_pathlabel"] = lbl
-                self._refresh_target_label(k)
+        for k in self.settings["targets"]:
+            self._refresh_target_label(k)
+        # Re-apply .env on top, so what the deploy uses matches what a fresh
+        # load() would produce.
+        settings.apply_env(self.settings)
+        self._dirty = False
+        self._refresh_settings_status()
         self._log(f"settings saved to {path}\n", "ok")
         self.status.configure(text="Settings saved")
 
     def _reload_settings(self):
-        if messagebox.askyesno("Reload", "Discard unsaved changes and reload "
-                                         "deploy.json from disk?"):
-            messagebox.showinfo(
-                "Reload", "Reopen the app to rebuild the Settings tab from disk.")
+        """Re-read .env + deploy.json and rebuild the fields in place."""
+        if self._dirty and not messagebox.askyesno(
+                "Reload", "Discard unsaved changes and reload from "
+                          ".env / deploy.json?"):
+            return
+        try:
+            fresh = settings.load()
+        except RuntimeError as exc:
+            messagebox.showerror("Reload failed", str(exc))
+            return
+        self.settings = fresh
+        self._build_settings_fields(self._settings_fields_frame)
+        for key in self.settings["targets"]:
+            self._refresh_target_label(key)
+        self._log(f"settings reloaded from {settings.env_path(self.settings)} "
+                  f"and {settings.path()}\n", "ok")
+        self.status.configure(text="Settings reloaded")
 
     # -------------------------------------------------------------------- log
     def _log(self, text, tag=None):

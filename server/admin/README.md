@@ -241,3 +241,125 @@ pm2 restart atlas
 - Editable atlas columns exclude `atlas_id`, `id_name`, and `short_name`
   (identity/matching keys the scraper computes) and the edit-tracking columns.
 ```
+
+---
+
+## What changed in this round
+
+Nine items, covering issues #287 #286 #285 #281 #278 #276 #271 plus manual game
+creation and DLC tagging. Migration: **`sql/006_link_types_and_admin_activity.sql`**
+(safe to re-run).
+
+### 1. Add a game by hand
+`POST /api/atlas` with `{ fields: { title, creator, ... } }`. `atlas_id` comes
+from AUTO_INCREMENT and is returned.
+
+`id_name` and `short_name` are **derived, never accepted from the client**, using
+the same rule the scraper uses (`lib/identity.js`, a port of
+`scraper/utils/parser.ParseThreadItem`). This matters: `id_name` is the
+cross-source match key, so computing it any other way would mean the next crawl
+fails to recognise the row and inserts a duplicate alongside it. A collision is
+refused with a 409 that names the existing row.
+
+`GET /api/atlas/preview-identity?title=&creator=` previews the keys and any
+clash, which is what the create form shows live as you type.
+
+> The port needs Unicode property escapes, not `\W`. Python's `\W` on a str is
+> Unicode-aware so an accented letter survives the strip; JavaScript's is
+> ASCII-only and would delete it. "Café Romance" would otherwise key as
+> `CAFROMANCE` instead of `CAFÉROMANCE`.
+
+### 2. Search (#287)
+Was: one `%term%` OR'd across four columns, then `ORDER BY atlas_id`. Now:
+
+* the query splits into terms and **every term must match something**, so
+  "being dik" narrows instead of finding nothing
+* results are **ranked** — exact title, then prefix, then contains, then
+  id_name/creator/developer, with shorter titles winning ties
+* a purely numeric query is also an **id lookup** across `atlas_id`, `f95_id`
+  and `lc_id`
+* LIKE wildcards are **escaped** (`%` used to match the whole table) using `!`
+  as the escape char, which doesn't depend on `NO_BACKSLASH_ESCAPES`
+
+The row query and the COUNT share one fragment from `lib/search.js`, so they
+can't disagree about what matched.
+
+### 3. Mapped sources panel (#286)
+`GET /api/atlas/:id` now returns `_source_detail`: the full row for every mapped
+source, with display labels and field ordering. The edit modal shows it in a
+right-hand column (stacking under 1100px).
+
+Every source table declares `atlas_id UNIQUE`, so there is at most **one** row
+per source. "More than one mapping" means more than one *source* is mapped, so
+the switcher moves between F95 / LewdCorner / DLsite / SXS. It only renders when
+there's more than one.
+
+### 4. Favicons (#285)
+The server derives `_favicon_host` per link so all clients agree and a malformed
+URL can't produce a broken `<img>`. Icons come from DuckDuckGo's service — the
+same one F95 uses, so they match the source thread. They're decorative: every
+call site keeps its text label and a failed load hides the image.
+
+### 5 & 6. Link types, labels, DLC parents (#278)
+Applies to **store kinds only** (steam / gog / itch). `custom` links are plain
+web pages, so a game/DLC distinction is meaningless for them; they keep using
+`label` as their display name.
+
+* `entry_type` — `game` or `dlc`
+* `label` — free text on store links, so several Steam entries are tellable apart
+* a DLC can be tied to **either** another manual store link **or** a source
+  mapping, via `parent_kind` + (`parent_link_id` | `parent_source_id`)
+
+Rules enforced in `lib/manualLinks.js` (all cross-row, so not expressible as
+CHECK constraints): only a DLC may have a parent; the parent must belong to the
+same atlas row; a DLC can't parent a DLC; nothing is its own parent; and a base
+entry with DLC hanging off it can't be demoted. Deleting a parent **orphans** its
+DLC (`ON DELETE SET NULL`) rather than deleting them, and the API returns the
+orphan count so the UI can say so.
+
+`PATCH /api/atlas/:id/manual-links/:linkId` edits an existing link.
+
+### 7. Session length (#281)
+`SESSION_HOURS` default 12 → 168 (one week). Override in `server/.env`.
+
+### 8. Manual queue mapping (#276)
+`GET /api/queue/atlas-lookup/:atlasId` confirms an id exists and returns the row
+plus its owners, so a typo can't silently attach a thread to an unrelated game.
+It flags `_has_lc` because `lewdcorner.atlas_id` is UNIQUE and the link would
+fail. Linking still goes through the existing `POST /:lcId/link`.
+
+### 9. Admin activity (#271)
+New page at `/admin/activity`, backed by `GET /api/admin-activity`.
+
+**No new tracking table** — `atlas_audit` already stamps every action with the
+acting admin, so this is a read model over data that's already there and the
+history is *retroactive*. Actions are grouped into edit / addition / deletion /
+merge / queue / link / refresh / user / auth. Logins are counted but excluded
+from the headline total, because signing in a lot isn't doing a lot.
+
+> **Bug fixed along the way:** `logAudit(conn, payload)` was being called as
+> `logAudit(payload)` in four places in `routes/auth.js`, so destructuring
+> `undefined` threw straight into a `catch {}` that swallowed it. `auth.login`,
+> `auth.logout`, `user.add` and `user.remove` had therefore **never** been
+> recorded, which also means the Changelog page's `auth` and `user` filters had
+> always been empty. `logAudit` now accepts both call shapes.
+
+## Tests
+
+```bash
+npm test          # 21 render tests (esbuild + react-dom/server, no browser)
+npm run test:api  # 47 API tests against a real database
+```
+
+`tests/api.test.mjs` needs a running server, the schema applied, and a seeded
+admin. It writes and cleans up its own rows — **point it at a scratch database,
+never production**:
+
+```bash
+API_BASE=http://127.0.0.1:8788 ADMIN_USER=tester ADMIN_PASSWORD=... \
+  node tests/api.test.mjs
+```
+
+`tests/render.test.mjs` bundles the real JSX and renders it server-side. It
+catches what `vite build` cannot: a typo'd prop, an undefined variable in a
+render path, `.map` on a null, a crash on empty data.

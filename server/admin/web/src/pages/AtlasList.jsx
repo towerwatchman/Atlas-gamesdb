@@ -1,78 +1,142 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, fmtTime } from '../lib/api.js';
-import { SourceBadges, SourceLinkList, ExternalLinkBadges, Notice, Modal, Spinner } from '../components/ui.jsx';
-
-const EXT_KINDS = [
-  { value: 'steam', label: 'Steam' },
-  { value: 'gog', label: 'GOG' },
-  { value: 'itch', label: 'itch.io' },
-  { value: 'custom', label: 'Custom' },
-];
-
-// External-links editor embedded in the game edit modal. These are admin-only
-// links (Steam/GOG/Itch/custom) stored separately from scraped data, so a
-// re-scrape never overwrites them.
-function ExternalLinksEditor({ atlasId, links, setLinks, onError }) {
-  const [kind, setKind] = useState('steam');
-  const [label, setLabel] = useState('');
-  const [extId, setExtId] = useState('');
-  const [url, setUrl] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  async function add() {
-    onError('');
-    if (!extId.trim() && !url.trim()) { onError('Provide an ID, a URL, or both.'); return; }
-    setBusy(true);
-    try {
-      const created = await api.post(`/api/atlas/${atlasId}/manual-links`, {
-        kind, label: label.trim() || undefined, extId: extId.trim() || undefined, url: url.trim() || undefined,
-      });
-      setLinks([created, ...links]);
-      setLabel(''); setExtId(''); setUrl('');
-    } catch (e) { onError(e.message); } finally { setBusy(false); }
-  }
-
-  async function remove(l) {
-    onError('');
-    try {
-      await api.del(`/api/atlas/${atlasId}/manual-links/${l.link_id}`);
-      setLinks(links.filter((x) => x.link_id !== l.link_id));
-    } catch (e) { onError(e.message); }
-  }
-
-  return (
-    <div className="panel panel-pad" style={{ marginTop: 12, background: 'var(--panel-2)' }}>
-      <h3 style={{ fontSize: 14, margin: '0 0 4px', color: 'var(--muted)' }}>External links</h3>
-      <p className="hint" style={{ marginBottom: 10 }}>
-        Steam, GOG, itch.io or custom links. Stored separately from scraped data, so they survive re-scrapes.
-      </p>
-
-      {links.length > 0 && (
-        <div style={{ marginBottom: 12 }}>
-          <ExternalLinkBadges links={links} onRemove={remove} />
-        </div>
-      )}
-
-      <div className="ext-add">
-        <select style={{ width: 'auto' }} value={kind} onChange={(e) => setKind(e.target.value)}>
-          {EXT_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
-        </select>
-        {kind === 'custom' && (
-          <input placeholder="Label (e.g. Patreon)" value={label} onChange={(e) => setLabel(e.target.value)} style={{ flex: '1 1 130px' }} />
-        )}
-        <input placeholder="ID (optional)" value={extId} onChange={(e) => setExtId(e.target.value)} style={{ flex: '1 1 110px' }} />
-        <input placeholder="https:// URL (optional)" value={url} onChange={(e) => setUrl(e.target.value)} style={{ flex: '2 1 200px' }} />
-        <button className="btn btn-sm btn-primary" onClick={add} disabled={busy || (!extId.trim() && !url.trim())}>
-          {busy ? 'Adding…' : 'Add link'}
-        </button>
-      </div>
-    </div>
-  );
-}
+import { SourceBadges, SourceLinkList, Notice, Modal, Spinner } from '../components/ui.jsx';
+import LinkEditor from '../components/LinkEditor.jsx';
+import SourcePanel from '../components/SourcePanel.jsx';
 
 // Fields shown as a wide textarea rather than a single-line input.
 const LONG_FIELDS = new Set(['overview', 'tags', 'genre', 'previews', 'translations']);
+
+/**
+ * Create a new atlas game (requirement 1).
+ *
+ * atlas_id is assigned by AUTO_INCREMENT once saved, so the form never asks for
+ * one. id_name / short_name are derived server-side using the SAME rule the
+ * scraper uses -- they're previewed live here because a clash with an existing
+ * row means the game is already in the atlas, and adding it again would create
+ * the duplicate the key exists to prevent.
+ */
+function CreateModal({ onClose, onCreated }) {
+  const [cols, setCols] = useState([]);
+  const [draft, setDraft] = useState({ title: '', creator: '' });
+  const [identity, setIdentity] = useState(null);
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+
+  useEffect(() => {
+    api.get('/api/atlas/editable-columns').then(setCols).catch((e) => setErr(e.message));
+  }, []);
+
+  // Preview the derived keys as the admin types, debounced so we aren't firing a
+  // request per keystroke.
+  useEffect(() => {
+    if (!draft.title.trim()) { setIdentity(null); return undefined; }
+    const t = setTimeout(() => {
+      const qs = new URLSearchParams({ title: draft.title, creator: draft.creator || '' });
+      api.get(`/api/atlas/preview-identity?${qs}`).then(setIdentity).catch(() => setIdentity(null));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [draft.title, draft.creator]);
+
+  async function save() {
+    setErr(''); setBusy(true);
+    try {
+      const fields = {};
+      Object.entries(draft).forEach(([k, v]) => { if (String(v).trim() !== '') fields[k] = v; });
+      const created = await api.post('/api/atlas', { fields });
+      onCreated(created);
+    } catch (e) { setErr(e.message); setBusy(false); }
+  }
+
+  const clash = identity?.clash;
+  const primary = ['title', 'creator', 'developer', 'version', 'engine', 'status', 'category'];
+  const rest = cols.filter((c) => !primary.includes(c));
+
+  return (
+    <Modal
+      title="Add a new game"
+      onClose={onClose}
+      footer={(
+        <>
+          <span className="hint" style={{ marginRight: 'auto' }}>
+            atlas_id is assigned when you save.
+          </span>
+          <button className="btn" onClick={onClose} disabled={busy}>Cancel</button>
+          <button
+            className="btn btn-primary"
+            onClick={save}
+            disabled={busy || !draft.title.trim() || !!clash}
+          >
+            {busy ? 'Creating…' : 'Create game'}
+          </button>
+        </>
+      )}
+    >
+      <Notice kind="err" onClose={() => setErr('')}>{err}</Notice>
+
+      <div className="grid-2">
+        {primary.map((c) => (
+          <div className="field" key={c}>
+            <label htmlFor={`c-${c}`}>{c}{c === 'title' ? ' *' : ''}</label>
+            <input
+              id={`c-${c}`}
+              value={draft[c] ?? ''}
+              onChange={(e) => setDraft({ ...draft, [c]: e.target.value })}
+            />
+          </div>
+        ))}
+      </div>
+
+      <div className="panel panel-pad" style={{ marginTop: 12, background: 'var(--panel-2)' }}>
+        <h3 style={{ fontSize: 14, margin: '0 0 6px', color: 'var(--muted)' }}>
+          Identity keys (derived)
+        </h3>
+        {!identity ? (
+          <p className="hint" style={{ margin: 0 }}>Enter a title to see the keys.</p>
+        ) : (
+          <>
+            <div className="kv">
+              <span className="k">id_name</span><span className="mono">{identity.id_name}</span>
+              <span className="k">short_name</span><span className="mono">{identity.short_name}</span>
+            </div>
+            {clash ? (
+              <p className="hint" style={{ color: 'var(--danger, #f88)', marginBottom: 0 }}>
+                Already used by <a href={`/admin/atlas?focus=${clash.atlas_id}`}>#{clash.atlas_id} {clash.title}</a>.
+                That is the same game as far as the scraper is concerned — edit it
+                instead, or change the title/creator.
+              </p>
+            ) : (
+              <p className="hint" style={{ marginBottom: 0 }}>
+                Computed the same way the scraper does, so a later crawl of this
+                game will match this row instead of adding a duplicate.
+              </p>
+            )}
+          </>
+        )}
+      </div>
+
+      <button className="btn btn-sm" style={{ marginTop: 12 }} onClick={() => setShowAll(!showAll)}>
+        {showAll ? 'Hide' : 'Show'} the other {rest.length} fields
+      </button>
+      {showAll && (
+        <div className="grid-2" style={{ marginTop: 10 }}>
+          {rest.map((c) => (
+            <div className="field" key={c} style={LONG_FIELDS.has(c) ? { gridColumn: '1 / -1' } : undefined}>
+              <label htmlFor={`c-${c}`}>{c}</label>
+              {LONG_FIELDS.has(c) ? (
+                <textarea id={`c-${c}`} value={draft[c] ?? ''} onChange={(e) => setDraft({ ...draft, [c]: e.target.value })} />
+              ) : (
+                <input id={`c-${c}`} value={draft[c] ?? ''} onChange={(e) => setDraft({ ...draft, [c]: e.target.value })} />
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </Modal>
+  );
+}
 
 function EditModal({ atlasId, onClose, onSaved }) {
   const [row, setRow] = useState(null);
@@ -80,6 +144,9 @@ function EditModal({ atlasId, onClose, onSaved }) {
   const [draft, setDraft] = useState({});
   const [audit, setAudit] = useState([]);
   const [manualLinks, setManualLinks] = useState([]);
+  const [sourceDetail, setSourceDetail] = useState([]);
+  const [parentOptions, setParentOptions] = useState({ manual: [], sources: [] });
+  const [notice, setNotice] = useState('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -93,6 +160,8 @@ function EditModal({ atlasId, onClose, onSaved }) {
       if (!live) return;
       setRow(r); setCols(c); setAudit(a);
       setManualLinks(r._manual_links || []);
+      setSourceDetail(r._source_detail || []);
+      setParentOptions(r._parent_options || { manual: [], sources: [] });
       const d = {};
       c.forEach((col) => { d[col] = r[col] ?? ''; });
       setDraft(d);
@@ -131,6 +200,7 @@ function EditModal({ atlasId, onClose, onSaved }) {
       )}
     >
       <Notice kind="err" onClose={() => setErr('')}>{err}</Notice>
+      <Notice kind="ok" onClose={() => setNotice('')}>{notice}</Notice>
       {!row ? <Spinner /> : (
         <>
           <div style={{ marginBottom: 8 }}>
@@ -141,6 +211,8 @@ function EditModal({ atlasId, onClose, onSaved }) {
               </span>
             ) : null}
           </div>
+          <div className="edit-split">
+          <div className="edit-main">
           <div className="grid-2">
             {cols.map((c) => (
               <div className="field" key={c} style={LONG_FIELDS.has(c) ? { gridColumn: '1 / -1' } : undefined}>
@@ -156,12 +228,20 @@ function EditModal({ atlasId, onClose, onSaved }) {
             ))}
           </div>
 
-          <ExternalLinksEditor
+          <LinkEditor
             atlasId={atlasId}
             links={manualLinks}
             setLinks={setManualLinks}
+            options={parentOptions}
+            setOptions={setParentOptions}
             onError={setErr}
+            onNotice={setNotice}
           />
+          </div>
+          <aside className="edit-aside">
+            <SourcePanel detail={sourceDetail} />
+          </aside>
+          </div>
 
           <h3 style={{ fontSize: 14, margin: '14px 0 8px', color: 'var(--muted)' }}>Edit history</h3>
           {audit.length === 0 ? (
@@ -196,6 +276,7 @@ export default function AtlasList() {
   const [data, setData] = useState(null);
   const [offset, setOffset] = useState(0);
   const [editing, setEditing] = useState(null);
+  const [creating, setCreating] = useState(false);
   const [ok, setOk] = useState('');
   const [err, setErr] = useState('');
   const [searchParams, setSearchParams] = useSearchParams();
@@ -231,12 +312,13 @@ export default function AtlasList() {
           <h1>Games</h1>
           <p>Search the atlas table and edit any game. Edited rows are flagged and every change is logged.</p>
         </div>
+        <button className="btn btn-primary" onClick={() => setCreating(true)}>Add a game</button>
       </div>
 
       <div className="panel panel-pad" style={{ marginBottom: 16 }}>
         <form className="row" onSubmit={(e) => { e.preventDefault(); load(0); }}>
           <div style={{ flex: '1 1 240px' }}>
-            <input placeholder="Search title, creator, developer, id_name…" value={search} onChange={(e) => setSearch(e.target.value)} />
+            <input placeholder="Search title, creator, developer, id_name, or paste an id…" value={search} onChange={(e) => setSearch(e.target.value)} />
           </div>
           <select style={{ width: 'auto' }} value={edited} onChange={(e) => setEdited(e.target.value)}>
             <option value="">All rows</option>
@@ -291,6 +373,18 @@ export default function AtlasList() {
             </div>
           </div>
         </>
+      )}
+
+      {creating && (
+        <CreateModal
+          onClose={() => setCreating(false)}
+          onCreated={(created) => {
+            setCreating(false);
+            setOk(`Created atlas #${created.atlas_id} (${created.id_name}).`);
+            setEditing(created.atlas_id);
+            load(offset);
+          }}
+        />
       )}
 
       {editing != null && (
