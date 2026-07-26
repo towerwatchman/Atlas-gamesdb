@@ -1,6 +1,6 @@
 """
 Regression tests for the F95 thread-detail parser, run against saved
-fixtures (no network). Covers six real threads with different layouts.
+fixtures (no network). Covers seven real threads with different layouts.
 
     python -m pytest tests/            # or:  python tests/test_f95_detail.py
 """
@@ -187,6 +187,78 @@ def test_patreon_cw_variant_and_reply_scope():
     assert d["external_ids"]["patreon"] != "RenpyToolTotalTranslate"
 
 
+def test_steam_widget_embed_captured():
+    """The Steam appid must come out of the embedded store widget.
+
+    F95 threads frequently embed the Steam store widget instead of linking the
+    store page. Three separate things stopped this being picked up:
+      1. it is an <iframe>, and only <a href> elements were scanned;
+      2. s9e media embeds are lazy, so the URL sits in
+         data-s9e-mediaembed-src and there is no usable src attribute at all;
+      3. the URL path is /widget/<appid>, not /app/<appid>.
+    """
+    d = _load("mutant_college")
+    assert d["external_ids"].get("steam_appid") == "3291310"
+
+
+def test_steam_curator_link_not_treated_as_appid():
+    """store.steampowered.com/curator/<id> is not a game.
+
+    This thread credits the developer with a curator link right next to the
+    Developer label. A loose "steampowered.com/<route>/(\\d+)" pattern would
+    store the curator id as the game's appid.
+    """
+    d = _load("mutant_college")
+    assert d["external_ids"].get("steam_appid") != "44655465"
+
+
+def test_steam_widget_in_a_reply_is_ignored():
+    """A Steam widget outside the opening post is not this game's store page.
+
+    Hard Lessons has a steamstore embed, but it belongs to a reply from another
+    member, so it must not be absorbed. This is the counterpart to
+    test_steam_widget_embed_captured -- together they pin that embed scanning
+    respects post scope rather than sweeping the whole page.
+    """
+    import os
+    with open(os.path.join(FIX, "hardlessons.html"), encoding="utf-8") as fh:
+        raw = fh.read()
+    assert 'data-s9e-mediaembed="steamstore"' in raw, \
+        "fixture no longer contains the reply-side Steam widget this test covers"
+    d = _load("hardlessons")
+    assert "steam_appid" not in d["external_ids"]
+
+
+def test_mutant_college_full_parse():
+    d = _load("mutant_college")
+    assert d["logged_in"] is True
+    assert d["thread_id"] == "234103"
+    assert d["version"] == "0.14.0"
+    assert d["developer"] == "Space Samurai Games"
+    assert d["external_ids"].get("patreon") == "SpaceSamuraiStudio"
+    assert d["external_ids"].get("discord") == "BmQGS3smZn"
+    assert len(d["downloads"]) == 4
+    assert len(d["screens"]) == 9
+
+
+def test_embed_url_prefers_lazy_attribute_and_fixes_protocol():
+    from bs4 import BeautifulSoup
+    from scraper.agents.f95_detail import _embed_url
+    soup = BeautifulSoup(
+        '<iframe data-s9e-mediaembed="steamstore" '
+        'data-s9e-mediaembed-src="//store.steampowered.com/widget/1"></iframe>'
+        '<iframe src="//example.com/x"></iframe>'
+        '<iframe data-s9e-mediaembed-src="//a/1" src="//b/2"></iframe>'
+        '<iframe></iframe>', "lxml")
+    frames = soup.find_all("iframe")
+    # protocol-relative URLs are normalised so urlparse sees a host
+    assert _embed_url(frames[0]) == "https://store.steampowered.com/widget/1"
+    assert _embed_url(frames[1]) == "https://example.com/x"
+    # the lazy data- attribute wins over src
+    assert _embed_url(frames[2]) == "https://a/1"
+    assert _embed_url(frames[3]) == ""
+
+
 # --- unit-level coverage of the classifier ---------------------------------
 # The fixtures above only cover the URL shapes those five threads happen to
 # use. These cases pin the shapes that broke, plus the near-misses that a
@@ -229,6 +301,16 @@ CLASSIFY_CASES = [
     # subscribestar now also on .com
     ("https://subscribestar.adult/dev-name", ("subscribestar", "dev-name")),
     ("https://subscribestar.com/dev-name", ("subscribestar", "dev-name")),
+    # steam: the widget embed carries the appid, other routes are not apps
+    ("https://store.steampowered.com/app/1126320/Being_a_DIK/",
+     ("steam_appid", "1126320")),
+    ("//store.steampowered.com/widget/3291310", ("steam_appid", "3291310")),
+    ("https://store.steampowered.com/widget/3291310", ("steam_appid", "3291310")),
+    ("https://store.steampowered.com/curator/44655465", None),
+    ("https://store.steampowered.com/bundle/12345", None),
+    ("https://store.steampowered.com/sub/98765", None),
+    ("https://store.steampowered.com/developer/spacesamurai", None),
+    ("https://steamcommunity.com/app/1126320", ("steam_community", "1126320")),
     # untouched platforms, guarding against collateral damage
     ("https://vndb.org/v31929", ("vndb_id", "v31929")),
     ("https://caribdis.itch.io", ("itch_url", "caribdis.itch.io")),
@@ -287,4 +369,9 @@ if __name__ == "__main__":
     test_patreon_cw_variant_and_reply_scope()
     test_classify_external_url_shapes()
     test_bad_external_values_matches_the_patterns()
+    test_steam_widget_embed_captured()
+    test_steam_curator_link_not_treated_as_appid()
+    test_steam_widget_in_a_reply_is_ignored()
+    test_mutant_college_full_parse()
+    test_embed_url_prefers_lazy_attribute_and_fixes_protocol()
     print("all parser tests passed")

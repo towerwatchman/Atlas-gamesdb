@@ -87,6 +87,66 @@ than waiting on `--drain`.
 Afterwards the affected `atlas` rows get a new `last_record_update`, so they flow
 into the next delta package on their own.
 
+## The other failure mode: ids that aren't in an `<a href>`
+
+The route-name bug above is about parsing a URL wrongly. This one is about never
+seeing the URL at all.
+
+External ids were originally collected only from anchor tags:
+
+```python
+for a in scope.find_all("a", href=True):
+```
+
+F95 threads also embed the **Steam store widget**, which is an `<iframe>`, so it
+was invisible to that loop. Two further wrinkles:
+
+* XenForo renders media embeds through s9e, which loads them lazily. The real
+  `src` is assigned by JS at view time, so server-rendered and saved markup keep
+  the URL in `data-s9e-mediaembed-src` and have no usable `src` at all:
+
+  ```html
+  <iframe data-s9e-mediaembed="steamstore"
+          data-s9e-mediaembed-src="//store.steampowered.com/widget/3291310">
+  ```
+
+* The widget path is `/widget/<appid>`, not `/app/<appid>`, so even the URL on
+  its own wouldn't have matched the existing Steam pattern.
+
+`_embed_url()` handles the attribute precedence and normalises protocol-relative
+URLs, and the embed scan runs *after* the anchor scan so an explicit link always
+wins for the same platform.
+
+### Scope still applies
+
+Embeds are scanned within `external_scopes` (the opening post, plus support
+widgets whose author matches the credited developer) — not the whole page. Hard
+Lessons has a Steam widget in a *reply* from another member; that is not the
+game's store page and is correctly ignored. `test_steam_widget_embed_captured`
+and `test_steam_widget_in_a_reply_is_ignored` pin both halves.
+
+### Not every Steam route is an app
+
+`store.steampowered.com` also serves `/curator/<id>`, `/bundle/<id>`, `/sub/<id>`
+and `/developer/<name>`. Mutant College credits its developer with a curator
+link right next to the Developer label, so a generic
+`steampowered\.com/\w+/(\d+)` pattern would store the curator id as the game's
+appid. Both Steam patterns are deliberately explicit about the route.
+
+### Backfilling
+
+A newly-parseable field only appears on rows that get re-scraped. There is no way
+to tell which threads have a Steam widget without fetching them, so the options
+are a full re-crawl, or enqueueing the games that currently have no
+`steam_appid` (the only ones that could gain one):
+
+```sql
+SELECT COUNT(*) FROM atlas a
+JOIN f95_zone f ON f.atlas_id = a.atlas_id
+WHERE a.external_ids IS NULL
+   OR a.external_ids NOT LIKE '%steam_appid%';
+```
+
 ## Adding a new platform
 
 1. Put the specific prefixed forms *before* the bare-slug pattern.

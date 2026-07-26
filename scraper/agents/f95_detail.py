@@ -66,6 +66,28 @@ def _unwrap(href):
     return href
 
 
+def _embed_url(tag):
+    """Best-effort real URL for an embedded media element.
+
+    XenForo renders media embeds through s9e, which defers loading: the markup
+    carries data-s9e-mediaembed-src and JS copies it into src on view. A saved
+    or server-rendered page therefore has no usable src at all, so the data-
+    attribute is checked first.
+
+    Embed URLs are also commonly protocol-relative ("//store.steampowered.com/
+    widget/123"), which is normalised to https so downstream urlparse-based
+    helpers see a host rather than a path.
+    """
+    raw = (tag.get("data-s9e-mediaembed-src")
+           or tag.get("data-src")
+           or tag.get("src")
+           or "")
+    raw = raw.strip()
+    if raw.startswith("//"):
+        raw = "https:" + raw
+    return raw
+
+
 def _is_masked(url):
     return "/masked/" in (url or "")
 
@@ -117,6 +139,13 @@ def _classify_external(url):
     """Return (kind, value) for store/social URLs we care about, else None."""
     patterns = [
         ("steam_appid", r"store\.steampowered\.com/app/(\d+)"),
+        # F95 threads often embed the Steam store widget instead of (or as well
+        # as) linking the store page. The widget URL carries the same appid.
+        # Note this must stay an explicit /widget/ match: store.steampowered.com
+        # also serves /curator/<id>, /bundle/<id>, /sub/<id> and /developer/<id>,
+        # none of which are app ids, so a generic "/<route>/(\d+)" pattern would
+        # happily store a curator id as the game's appid.
+        ("steam_appid", r"store\.steampowered\.com/widget/(\d+)"),
         ("steam_community", r"steamcommunity\.com/(?:app|games)/(\d+)"),
         ("itch_url", r"https?://([\w-]+\.itch\.io(?:/[\w-]+)?)"),
         ("vndb_id", r"vndb\.org/(v\d+)"),
@@ -403,6 +432,25 @@ def parse_thread_detail(html):
     for scope in external_scopes:
         for a in scope.find_all("a", href=True):
             cls = _classify_external(_unwrap(a["href"]))
+            if cls:
+                out["external_ids"].setdefault(cls[0], cls[1])
+        # Media embeds, scanned AFTER the anchors so an explicit link always
+        # wins over an embed for the same platform.
+        #
+        # The Steam store widget is an <iframe>, not an <a>, so the loop above
+        # never saw it. Worse, XenForo's s9e media embeds are lazy: the real
+        # src is only assigned by JS at runtime, and the saved markup keeps the
+        # URL in data-s9e-mediaembed-src instead:
+        #
+        #   <iframe data-s9e-mediaembed="steamstore"
+        #           data-s9e-mediaembed-src="//store.steampowered.com/widget/3291310">
+        #
+        # So a plain src lookup finds nothing either. Both attributes are read,
+        # data- first. This stays inside external_scopes, which means an embed
+        # in somebody else's reply is still ignored -- Hard Lessons has a Steam
+        # widget in a reply that is not that game's store page.
+        for frame in scope.select("iframe, [data-s9e-mediaembed-src]"):
+            cls = _classify_external(_unwrap(_embed_url(frame)))
             if cls:
                 out["external_ids"].setdefault(cls[0], cls[1])
 
