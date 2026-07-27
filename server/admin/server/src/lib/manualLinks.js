@@ -249,6 +249,7 @@ export async function addManualLink(atlasId, input, user) {
       atlasId, field: 'manual_link.add', user,
       oldValue: null,
       newValue: describe({ ...core, ext_id: core.extId, entry_type: core.entryType }),
+      snapshot: { table: 'atlas_manual_links', linkId: insertId },
     });
   });
 
@@ -321,6 +322,9 @@ export async function updateManualLink(atlasId, linkId, input, user) {
       atlasId, field: 'manual_link.update', user,
       oldValue: before,
       newValue: describe({ ...core, ext_id: core.extId, entry_type: core.entryType }),
+      // The full prior row. `oldValue` is a human description; parsing it back
+      // would be guesswork.
+      snapshot: { table: 'atlas_manual_links', linkId, before: current },
     });
   });
 
@@ -335,15 +339,16 @@ export async function removeManualLink(atlasId, linkId, user) {
   atlasId = Number(atlasId);
   linkId = Number(linkId);
   const l = await q1(
-    `SELECT kind, label, ext_id, url, entry_type
-       FROM atlas_manual_links WHERE link_id = ? AND atlas_id = ? LIMIT 1`,
+    `SELECT * FROM atlas_manual_links WHERE link_id = ? AND atlas_id = ? LIMIT 1`,
     [linkId, atlasId]);
   if (!l) {
     throw Object.assign(new Error('Link not found.'), { status: 404 });
   }
   // Report how many DLC get orphaned, so the UI can warn before deleting.
-  const kids = await q1(
-    'SELECT COUNT(*) AS n FROM atlas_manual_links WHERE parent_link_id = ?', [linkId]);
+  const kidRows = await q(
+    'SELECT link_id FROM atlas_manual_links WHERE parent_link_id = ?', [linkId]);
+  const childIds = kidRows.map((r) => r.link_id);
+  const kids = { n: childIds.length };
   await tx(async (conn) => {
     // The FK is ON DELETE SET NULL, so children survive as unparented rather
     // than vanishing with the parent.
@@ -353,6 +358,9 @@ export async function removeManualLink(atlasId, linkId, user) {
     await logAudit(conn, {
       atlasId, field: 'manual_link.remove', user,
       oldValue: describe(l), newValue: null,
+      // The deleted row, plus the DLC whose parent pointer the FK just nulled,
+      // so an undo can restore the link AND re-tie its children.
+      snapshot: { table: 'atlas_manual_links', row: l, orphanedChildren: childIds },
     });
   });
   return { removed: linkId, orphaned: kids ? Number(kids.n) : 0 };

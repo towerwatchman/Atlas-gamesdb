@@ -219,18 +219,74 @@ tbody tr.row-deferred:hover td { opacity: 1; }
 .pager { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 14px; }
 
 /* --- edit modal: fields left, mapped sources right (issue #286) -----------
-   Two columns on a wide screen, stacked on a narrow one. The aside is sticky so
-   the source ids stay visible while scrolling a long field list. */
+
+   The atlas editor holds ~28 fields plus the links editor, the edit history AND
+   a source panel. The default 640px modal cannot carry that: with a 300px aside
+   it leaves ~240px for a two-column field grid, i.e. ~110px per input. So the
+   editor opts into a wide shell and a split body.
+
+   The body is a two-pane layout rather than one scrolling block, which is what
+   makes the source column run the full height of the modal instead of stopping
+   wherever its content happens to end. Each pane scrolls on its own. */
+.modal-wide { max-width: min(1320px, 96vw); }
+
+.modal-body-split {
+  /* The panes own the scrolling, not the body. */
+  padding: 0;
+  overflow: hidden;
+  max-height: none;
+  height: min(78vh, 920px);
+}
+
 .edit-split {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 380px);
-  gap: 16px;
-  align-items: start;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 400px);
+  height: 100%;
+  min-height: 0;
 }
-.edit-main { min-width: 0; }
-.edit-aside { position: sticky; top: 0; min-width: 0; }
+.edit-main {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px;
+}
+.edit-aside {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 16px;
+  border-left: 0.5px solid var(--hair);
+  background: var(--panel-2);
+}
+
+/* More usable field density now that there's room for it: as many ~230px
+   columns as fit, rather than always exactly two. */
+.edit-main .grid-2 {
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+}
+
+/* The source panel is flush inside the aside -- the aside already provides the
+   border and background, so a nested panel would just look boxy. */
+.source-panel { display: flex; flex-direction: column; gap: 8px; }
+.source-panel .table-wrap { max-height: none; }
 
 @media (max-width: 1100px) {
-  .edit-split { grid-template-columns: minmax(0, 1fr); }
-  .edit-aside { position: static; }
+  /* Stack, and hand scrolling back to the body. */
+  .modal-body-split {
+    display: block;
+    padding: 18px;
+    overflow-y: auto;
+    height: auto;
+    max-height: 70vh;
+  }
+  .edit-split { grid-template-columns: minmax(0, 1fr); height: auto; }
+  .edit-main { overflow: visible; padding: 0; }
+  .edit-aside {
+    overflow: visible;
+    padding: 14px 0 0;
+    border-left: none;
+    border-top: 0.5px solid var(--hair);
+    background: none;
+    margin-top: 14px;
+  }
 }

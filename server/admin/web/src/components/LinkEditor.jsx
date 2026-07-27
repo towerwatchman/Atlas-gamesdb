@@ -56,6 +56,62 @@ function encodeParent(link) {
     : `${link.parent_kind}:${link.parent_source_id}`;
 }
 
+/**
+ * The scraper's own external_ids, rendered as links (read-only).
+ *
+ * These live in atlas.external_ids, a JSON blob the scraper rewrites in full on
+ * every refresh — so they can't be edited here; anything typed would vanish on
+ * the next crawl. To pin something permanently, add it as a manual link below,
+ * which the scraper never touches.
+ */
+function ScrapedLinks({ links }) {
+  if (!links || !links.length) return null;
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div className="row" style={{ gap: 8, alignItems: 'baseline', marginBottom: 6 }}>
+        <span className="hint" style={{ fontWeight: 600 }}>From the scraper</span>
+        <span className="hint">
+          read-only — rewritten on every refresh
+        </span>
+      </div>
+      <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+        {links.map((l) => {
+          const inner = (
+            <>
+              <Favicon host={l.favicon_host} size={14} />
+              <span>{l.label}</span>
+              <span className="mono" style={{ opacity: 0.75 }}>{l.value}</span>
+            </>
+          );
+          return l.url ? (
+            <a
+              key={`${l.key}-${l.value}`}
+              className="badge badge-ext row"
+              style={{ gap: 6, alignItems: 'center' }}
+              href={l.url}
+              target="_blank"
+              rel="noreferrer"
+              title={l.url}
+            >
+              {inner}
+              <span aria-hidden="true">↗</span>
+            </a>
+          ) : (
+            <span
+              key={`${l.key}-${l.value}`}
+              className="badge badge-ext row"
+              style={{ gap: 6, alignItems: 'center' }}
+              title={l.known ? 'No public URL can be built from this id alone' : 'Unrecognised key'}
+            >
+              {inner}
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function LinkRow({ atlasId, link, links, options, onChanged, onRemoved, onError }) {
   const [editing, setEditing] = useState(false);
   const [label, setLabel] = useState(link.label || '');
@@ -138,7 +194,9 @@ function LinkRow({ atlasId, link, links, options, onChanged, onRemoved, onError 
  * label, a game/DLC type, and — for a DLC — the mapping it belongs to. `custom`
  * links are plain web pages, so they get a name and nothing else.
  */
-export default function LinkEditor({ atlasId, links, setLinks, options, setOptions, onError, onNotice }) {
+export default function LinkEditor({
+  atlasId, links, setLinks, options, setOptions, onError, onNotice, scrapedLinks,
+}) {
   const [kind, setKind] = useState('steam');
   const [label, setLabel] = useState('');
   const [extId, setExtId] = useState('');
@@ -197,6 +255,12 @@ export default function LinkEditor({ atlasId, links, setLinks, options, setOptio
   return (
     <div className="panel panel-pad" style={{ marginTop: 12, background: 'var(--panel-2)' }}>
       <h3 style={{ fontSize: 14, margin: '0 0 4px', color: 'var(--muted)' }}>External links</h3>
+
+      <ScrapedLinks links={scrapedLinks} />
+
+      <div className="row" style={{ gap: 8, alignItems: 'baseline', marginBottom: 4 }}>
+        <span className="hint" style={{ fontWeight: 600 }}>Admin links</span>
+      </div>
       <p className="hint" style={{ marginBottom: 10 }}>
         Steam, GOG, itch.io or custom links. Stored separately from scraped data, so
         they survive re-scrapes. Store links can be labelled and marked as a game or
@@ -210,7 +274,7 @@ export default function LinkEditor({ atlasId, links, setLinks, options, setOptio
           {dlc.map((l) => <LinkRow key={l.link_id} link={l} {...rowProps} />)}
         </>
       )}
-      {links.length === 0 && <p className="hint">No external links yet.</p>}
+      {links.length === 0 && <p className="hint">No admin links yet.</p>}
 
       <div className="ext-add" style={{ marginTop: 10 }}>
         <select style={{ width: 'auto' }} value={kind} onChange={(e) => setKind(e.target.value)}>

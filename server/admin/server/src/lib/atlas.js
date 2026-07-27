@@ -4,6 +4,8 @@
 // "this row was touched by a human" flag (requirement 1) is always in sync
 // with the log.
 // ---------------------------------------------------------------------------
+import { randomUUID } from 'crypto';
+
 import { q, q1, write, tx } from './db.js';
 import { computeIdentity } from './identity.js';
 
@@ -37,19 +39,40 @@ export async function logAudit(connOrPayload, maybePayload) {
   // the Changelog page's "auth" and "user" filters could never match anything.
   const insideTx = maybePayload !== undefined;
   const conn = insideTx ? connOrPayload : null;
-  const { atlasId, field, oldValue, newValue, user } = (insideTx ? maybePayload : connOrPayload) || {};
+  const {
+    atlasId, field, oldValue, newValue, user,
+    // `snapshot` carries whatever an undo needs (see sql/007). It is
+    // captured here because this is the last moment the old state exists.
+    // `batchId` groups the rows one logical operation produces so they can
+    // be reverted together and in the right order.
+    snapshot = null, batchId = null, revertOf = null,
+  } = (insideTx ? maybePayload : connOrPayload) || {};
   if (!field) throw new Error('logAudit requires a field.');
   const sql = `INSERT INTO atlas_audit
-      (atlas_id, field, old_value, new_value, admin_user, ts)
-      VALUES (?, ?, ?, ?, ?, ?)`;
+      (atlas_id, field, old_value, new_value, admin_user, ts,
+       snapshot, batch_id, revert_of)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
   const params = [
     atlasId ?? null, field,
     oldValue === undefined ? null : oldValue,
     newValue === undefined ? null : newValue,
     user, nowEpoch(),
+    snapshot == null ? null
+      : (typeof snapshot === 'string' ? snapshot : JSON.stringify(snapshot)),
+    batchId ?? null,
+    revertOf ?? null,
   ];
-  if (conn) await conn.execute(sql, params);
-  else await write(sql, params);
+  if (conn) {
+    const [res] = await conn.execute(sql, params);
+    return res.insertId;
+  }
+  const res = await write(sql, params);
+  return res?.insertId ?? null;
+}
+
+/** A batch id groups the audit rows one logical operation writes. */
+export function newBatchId() {
+  return randomUUID();
 }
 
 /**
@@ -153,6 +176,8 @@ export async function createAtlasRow(fields, user) {
   }
 
   const ts = nowEpoch();
+  // One batch so the create and its per-field rows undo together.
+  const batchId = newBatchId();
   cols.push('edited', 'edited_at', 'edited_by', 'last_record_update');
   vals.push(1, ts, user, ts);
 
@@ -166,15 +191,16 @@ export async function createAtlasRow(fields, user) {
     // One summary row so the Changelog and the per-admin activity page both show
     // the creation, then a row per supplied field so the detail is auditable.
     await logAudit(conn, {
-      atlasId, field: 'atlas.create', user,
+      atlasId, field: 'atlas.create', user, batchId,
       oldValue: null, newValue: `${title}${creator ? ` (${creator})` : ''} [${id_name}]`,
+      snapshot: { table: 'atlas', createdId: atlasId },
     });
     for (let i = 0; i < cols.length; i += 1) {
       const col = cols[i];
       if (['edited', 'edited_at', 'edited_by', 'last_record_update'].includes(col)) continue;
       if (vals[i] === null) continue;
       await logAudit(conn, {
-        atlasId, field: `atlas.${col}`, user,
+        atlasId, field: `atlas.${col}`, user, batchId,
         oldValue: null, newValue: String(vals[i]),
       });
     }
@@ -185,11 +211,20 @@ export async function createAtlasRow(fields, user) {
 
 export async function getAuditForAtlas(atlasId, limit = 200) {
   const lim = Math.min(Math.max(parseInt(limit, 10) || 200, 1), 1000);
-  return q(
-    `SELECT audit_id, atlas_id, field, old_value, new_value, admin_user, ts
+  const rows = await q(
+    `SELECT audit_id, atlas_id, field, old_value, new_value, admin_user, ts,
+            snapshot, batch_id, revert_of, reverted_at, reverted_by
      FROM atlas_audit WHERE atlas_id = ? ORDER BY ts DESC, audit_id DESC LIMIT ${lim}`,
     [atlasId],
   );
+  // Annotate each row with whether it can be undone, so the history table can
+  // show a working button (or say why not) without a request per row. Imported
+  // lazily to avoid a cycle: revert.js needs logAudit from here.
+  const { describeRevertability } = await import('./revert.js');
+  return rows.map((r) => {
+    const { snapshot, ...rest } = r;   // the blob is internal; don't ship it
+    return { ...rest, ...describeRevertability(r) };
+  });
 }
 
 export async function getRecentAudit(limit = 200) {

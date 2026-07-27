@@ -14,7 +14,7 @@
  *   node tests/render.test.mjs
  */
 import { build } from 'esbuild';
-import { writeFileSync, mkdtempSync, rmSync } from 'fs';
+import { writeFileSync, mkdtempSync, rmSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
@@ -136,6 +136,20 @@ const LINKS = [
     parent_kind: null, parent_link_id: null, parent_source_id: null,
     _store: false, _favicon_host: 'blog.example.com',
   },
+];
+
+// Exactly the blob shape the scraper writes, taken from a real Eternum row.
+const SCRAPED = [
+  { key: 'patreon', label: 'Patreon', value: 'onceinalifetime',
+    url: 'https://www.patreon.com/c/onceinalifetime',
+    favicon_host: 'www.patreon.com', source: 'scraper', known: true },
+  { key: 'vndb_id', label: 'VNDB', value: 'v31929',
+    url: 'https://vndb.org/v31929', favicon_host: 'vndb.org',
+    source: 'scraper', known: true },
+  { key: 'gamejolt', label: 'Game Jolt', value: '12345', url: null,
+    favicon_host: 'gamejolt.com', source: 'scraper', known: true },
+  { key: 'weird_key', label: 'weird_key', value: 'x', url: null,
+    favicon_host: null, source: 'scraper', known: false },
 ];
 
 const PARENT_OPTIONS = {
@@ -268,7 +282,7 @@ async function main() {
       atlasId: 2, links: [], setLinks() {}, options: { manual: [], sources: [] },
       setOptions() {}, onError() {}, onNotice() {},
     }));
-    has(html, 'No external links yet', 'empty state');
+    has(html, 'No admin links yet', 'empty state');
     has(html, 'Add link', 'add form still present');
   });
 
@@ -299,6 +313,49 @@ async function main() {
     has(html, 'unparented', 'unparented DLC');
   });
 
+  test('LinkEditor shows the scraper ids as links', () => {
+    const html = render(h(m.LinkEditor, {
+      atlasId: 2, links: [], setLinks() {}, options: PARENT_OPTIONS,
+      setOptions() {}, onError() {}, onNotice() {}, scrapedLinks: SCRAPED,
+    }));
+    has(html, 'From the scraper', 'section heading');
+    has(html, 'read-only', 'must say why they cannot be edited');
+    has(html, 'https://www.patreon.com/c/onceinalifetime', 'patreon url');
+    has(html, 'https://vndb.org/v31929', 'vndb url');
+    has(html, 'onceinalifetime', 'the id itself is shown');
+    has(html, 'www.patreon.com.ico', 'favicon');
+  });
+
+  test('LinkEditor renders an unlinkable scraped id without an anchor', () => {
+    const html = render(h(m.LinkEditor, {
+      atlasId: 2, links: [], setLinks() {}, options: PARENT_OPTIONS,
+      setOptions() {}, onError() {}, onNotice() {},
+      scrapedLinks: [SCRAPED[2]],
+    }));
+    has(html, 'Game Jolt', 'label');
+    has(html, '12345', 'value');
+    lacks(html, '<a ', 'no url means no anchor');
+  });
+
+  test('LinkEditor still shows scraped ids when there are no admin links', () => {
+    // The reported bug: a game with a rich external_ids blob and no manual
+    // links showed a completely empty External links section.
+    const html = render(h(m.LinkEditor, {
+      atlasId: 2, links: [], setLinks() {}, options: PARENT_OPTIONS,
+      setOptions() {}, onError() {}, onNotice() {}, scrapedLinks: SCRAPED,
+    }));
+    has(html, 'From the scraper', 'scraped section');
+    has(html, 'No admin links yet', 'and the empty admin state');
+  });
+
+  test('LinkEditor omits the scraped section when there is nothing to show', () => {
+    const html = render(h(m.LinkEditor, {
+      atlasId: 2, links: LINKS, setLinks() {}, options: PARENT_OPTIONS,
+      setOptions() {}, onError() {}, onNotice() {}, scrapedLinks: [],
+    }));
+    lacks(html, 'From the scraper', 'no empty heading');
+  });
+
   // --------------------------------------------------------- whole pages
   test('AdminActivity renders its loading state', () => {
     const html = routed(h(m.AdminActivity));
@@ -316,6 +373,94 @@ async function main() {
   test('Queue renders without data', () => {
     const html = routed(h(m.Queue));
     has(html, 'queue', 'page renders');
+  });
+
+  // ------------------------------------------------------------- layout
+  // The edit modal's two panes are a CSS + DOM-ordering contract that no render
+  // assertion can see, because SSR never reaches the loaded state (useEffect
+  // doesn't run). These check it statically instead. The specific regression:
+  // the edit history was originally emitted AFTER the split, where the body's
+  // overflow:hidden clipped it and made it unreachable.
+  const css = readFileSync(resolve(webSrc, 'styles.css'), 'utf8');
+  const atlasJsx = readFileSync(resolve(webSrc, 'pages', 'AtlasList.jsx'), 'utf8');
+
+  test('layout: the editor opts into the wide shell and the split body', () => {
+    has(atlasJsx, 'className="modal-wide"', 'wide shell');
+    has(atlasJsx, "bodyClassName={row ? 'modal-body-split' : ''}", 'split body');
+  });
+
+  test('layout: the wide modal is actually wide', () => {
+    const m = /\.modal-wide\s*\{[^}]*max-width:\s*min\((\d+)px/.exec(css);
+    assert(m, '.modal-wide must set a max-width');
+    const px = Number(m[1]);
+    assert(px >= 1100, `.modal-wide is only ${px}px; the default 640px was the complaint`);
+  });
+
+  test('layout: the panes scroll, not the body', () => {
+    const m = /\.modal-body-split\s*\{([^}]*)\}/.exec(css);
+    assert(m, '.modal-body-split missing');
+    has(m[1], 'overflow: hidden', 'body must not scroll as one block');
+    has(m[1], 'padding: 0', 'padding moves to the panes');
+    const main = /\.edit-main\s*\{([^}]*)\}/.exec(css);
+    const aside = /\.edit-aside\s*\{([^}]*)\}/.exec(css);
+    has(main[1], 'overflow-y: auto', 'left pane scrolls');
+    has(aside[1], 'overflow-y: auto', 'right pane scrolls');
+    // min-height:0 is what actually lets a grid child scroll rather than grow.
+    has(main[1], 'min-height: 0', 'left pane needs min-height:0 to scroll in a grid');
+    has(aside[1], 'min-height: 0', 'right pane needs min-height:0 to scroll in a grid');
+  });
+
+  test('layout: the source pane runs the full height', () => {
+    const split = /\.edit-split\s*\{([^}]*)\}/.exec(css);
+    assert(split, '.edit-split missing');
+    has(split[1], 'height: 100%', 'the grid must fill the body for the aside to reach the bottom');
+    const aside = /\.edit-aside\s*\{([^}]*)\}/.exec(css);
+    has(aside[1], 'border-left', 'the full-height divider');
+  });
+
+  test('layout: everything scrollable is inside a pane', () => {
+    // Source order: edit-main opens, holds the fields AND the history, closes,
+    // then the aside, then the split closes. Anything after the split would be
+    // clipped by overflow:hidden.
+    const iSplit = atlasJsx.indexOf('className="edit-split"');
+    const iMain = atlasJsx.indexOf('className="edit-main"');
+    const iGrid = atlasJsx.indexOf('className="grid-2"', iMain);
+    const iLinks = atlasJsx.indexOf('<LinkEditor', iMain);
+    const iHistory = atlasJsx.indexOf('Edit history', iMain);
+    const iAside = atlasJsx.indexOf('className="edit-aside"');
+    const iPanel = atlasJsx.indexOf('<SourcePanel', iAside);
+    for (const [name, i] of Object.entries({ iSplit, iMain, iGrid, iLinks, iHistory, iAside, iPanel })) {
+      assert(i > -1, `${name} not found`);
+    }
+    assert(iSplit < iMain, 'split must wrap the main pane');
+    assert(iMain < iGrid, 'fields inside the main pane');
+    assert(iGrid < iLinks, 'links after the fields');
+    assert(iLinks < iHistory, 'history after the links');
+    assert(iHistory < iAside,
+      'the edit history must be INSIDE the left pane -- after the aside it gets clipped by overflow:hidden');
+    assert(iAside < iPanel, 'source panel inside the aside');
+  });
+
+  test('layout: the split collapses on narrow screens', () => {
+    const mq = /@media\s*\(max-width:\s*1100px\)\s*\{([\s\S]*?)\n\}/.exec(css);
+    assert(mq, 'no 1100px breakpoint');
+    has(mq[1], '.modal-body-split', 'body must revert to normal scrolling');
+    has(mq[1], 'display: block', 'stack the panes');
+    has(mq[1], 'border-top', 'divider moves above the source panel when stacked');
+  });
+
+  test('layout: fields reflow to fill the wider pane', () => {
+    has(css, '.edit-main .grid-2', 'the field grid should densify inside the wide pane');
+    const m = /\.edit-main \.grid-2\s*\{([^}]*)\}/.exec(css);
+    has(m[1], 'auto-fit', 'as many columns as fit, rather than always two');
+  });
+
+  test('layout: the source panel is flush inside the aside', () => {
+    const panel = readFileSync(resolve(webSrc, 'components', 'SourcePanel.jsx'), 'utf8');
+    lacks(panel, "panel panel-pad", 'nested panel chrome would look boxy inside the aside');
+    has(panel, 'className="source-panel"', 'flush wrapper');
+    // A fixed inner max-height would stop it filling the full-height pane.
+    lacks(panel, 'maxHeight: 320', 'the inner table must not cap its own height');
   });
 
   rmSync(dir, { recursive: true, force: true });

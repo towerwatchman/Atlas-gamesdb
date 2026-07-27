@@ -363,3 +363,81 @@ API_BASE=http://127.0.0.1:8788 ADMIN_USER=tester ADMIN_PASSWORD=... \
 `tests/render.test.mjs` bundles the real JSX and renders it server-side. It
 catches what `vite build` cannot: a typo'd prop, an undefined variable in a
 render path, `.map` on a null, a crash on empty data.
+
+---
+
+## Scraped external IDs, and undo
+
+Migration: **`sql/007_audit_snapshots_and_revert.sql`** (safe to re-run).
+
+### The scraper's external IDs are now visible
+
+`atlas.external_ids` holds IDs the scraper pulled off the source thread:
+
+```json
+{"patreon": "onceinalifetime", "subscribestar": "caribdis",
+ "itch_url": "caribdis.itch.io", "discord": "caribdisgames",
+ "twitter": "Caribdis_games", "vndb_id": "v31929"}
+```
+
+Nothing ever read that column. It isn't in `EDITABLE_ATLAS_COLUMNS` and no route
+returned it, so a game with a full blob and no admin-added links showed an empty
+External links section. `GET /api/atlas/:id` now returns `_scraped_links` and the
+editor renders them with favicons under **From the scraper**.
+
+They are **read-only on purpose**: the scraper rewrites that column wholesale on
+every refresh, so anything typed there would vanish on the next crawl. To pin
+something permanently, add it as an admin link — `atlas_manual_links` is never
+touched by the scraper.
+
+`lib/externalIds.js` is the inverse of
+`scraper/agents/f95_detail.py::_classify_external` — that turns a URL into
+`(kind, id)`, this turns `(kind, id)` back into a URL. **If you add a pattern
+there, add the matching entry here.** It handles the awkward cases: a numeric
+Patreon value is an old `/user?u=` profile while a slug is a `/c/` creator page;
+`itch_url` is stored as a bare host; `gamejolt` stores only an id and the public
+URL needs the slug too, so it renders without a link rather than a broken one.
+
+### Undo
+
+Any recorded action can be reverted from the edit history, subject to the limits
+below. `GET /api/revert/:auditId` previews (never writes),
+`POST /api/revert/:auditId` applies.
+
+Three columns on `atlas_audit` make it work:
+
+* **`snapshot`** — JSON holding what an undo needs, written at the moment of the
+  change because that is the only point the old state still exists. Merges used
+  to record only `"atlas_id 123 (duplicate merged into 456)"` and then `DELETE`
+  the row; every field value was gone. Relinks didn't record *which* source rows
+  moved, so an undo couldn't tell them from rows the survivor already owned.
+* **`batch_id`** — groups the rows one logical operation writes. A merge emits
+  several relinks plus a delete; reverting works on the whole batch, newest row
+  first, in one transaction, so the atlas row is restored before the relinks
+  that need it to exist. All-or-nothing: a half-undone merge is worse than one
+  that stands.
+* **`revert_of` / `reverted_at` / `reverted_by`** — an undo is itself audited and
+  can't be applied twice.
+
+What reverts: field edits, game creation (deletes the row), atlas/merge
+deletions (rebuilds the row with its original `atlas_id`, so every source row
+and client reference still points at the right game), relinks and floats,
+and manual link add / remove / update. Removing a link that had DLC hanging off
+it restores the link **and** re-ties the children.
+
+Two deliberate refusals:
+
+* **Nothing before migration 007 is revertible.** Those rows have no snapshot,
+  so for anything lossy the old state genuinely isn't recoverable. The API says
+  so per row, with a reason, rather than failing halfway through.
+* **A revert won't silently discard later work.** Before undoing a field edit it
+  checks the column still holds the value that edit set. If someone changed it
+  since, the revert is refused — undo is not a rollback of everything after it.
+
+Reverting a creation is refused if the row has since picked up a source mapping,
+because deleting it would orphan that mapping.
+
+```bash
+npm run test:revert   # 16 tests, including a full merge undo
+npm run test:all      # render + api + revert
+```

@@ -50,7 +50,7 @@ function RecentModal({ user, onClose }) {
   }, [user]);
 
   return (
-    <Modal title={`Recent activity — ${user}`} onClose={onClose}>
+    <Modal title={`Recent activity — ${user}`} onClose={onClose} className="modal-wide">
       <Notice kind="err" onClose={() => setErr('')}>{err}</Notice>
       {!rows ? <Spinner /> : rows.length === 0 ? (
         <p className="hint">Nothing recorded for this admin.</p>

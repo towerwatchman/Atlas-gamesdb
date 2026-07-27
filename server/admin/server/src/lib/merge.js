@@ -13,7 +13,7 @@
 //     as an orphan prompt rather than forcing it.
 // ---------------------------------------------------------------------------
 import { q, q1, tx, touchAtlas } from './db.js';
-import { logAudit } from './atlas.js';
+import { logAudit, newBatchId } from './atlas.js';
 
 // Sources that support floating (migration 002 relaxed these two). dlsite/sxs
 // still have NOT NULL/UNIQUE atlas_id, so they can be relinked but not floated
@@ -76,6 +76,10 @@ export async function isAtlasOrphaned(atlasId) {
  *     its sources have moved). Source rows are never deleted.
  */
 export async function mergeAtlasGroup({ survivorId, groupIds, user }) {
+  // One id across every audit row this merge writes, so the whole merge is
+  // undone as a unit. Reverting a relink without the delete (or vice versa)
+  // would leave source rows pointing at an atlas row that no longer exists.
+  const batchId = newBatchId();
   survivorId = Number(survivorId);
   const others = [...new Set(groupIds.map(Number))].filter((id) => id !== survivorId);
   if (!others.length) return { relinked: [], deleted: [] };
@@ -93,16 +97,26 @@ export async function mergeAtlasGroup({ survivorId, groupIds, user }) {
           `UPDATE ${table} SET atlas_id = ? WHERE atlas_id = ?`, [survivorId, aid]);
         relinked.push({ from: aid, to: survivorId, source: table, ids: rows.map((r) => r.v) });
         await logAudit(conn, {
-          atlasId: survivorId, field: 'merge.relink', user,
+          atlasId: survivorId, field: 'merge.relink', user, batchId,
           oldValue: `${table} atlas_id ${aid}`, newValue: `${table} atlas_id ${survivorId}`,
+          // WHICH rows moved, by primary key. Without this an undo cannot tell
+          // them from source rows the survivor already owned and would drag
+          // those across too.
+          snapshot: { table, idCol, ids: rows.map((r) => r.v), from: aid, to: survivorId },
         });
       }
       // Sources moved off aid; it is now orphaned -> delete the atlas row.
+      // Snapshot the whole row FIRST: once it is deleted there is nothing left
+      // to rebuild it from, which is why merges were previously un-undoable.
+      const [doomedRows] = await conn.execute(
+        'SELECT * FROM atlas WHERE atlas_id = ? LIMIT 1', [aid]);
+      const doomedRow = doomedRows && doomedRows[0] ? doomedRows[0] : null;
       await conn.execute('DELETE FROM atlas WHERE atlas_id = ?', [aid]);
       deleted.push(aid);
       await logAudit(conn, {
-        atlasId: aid, field: 'merge.delete', user,
+        atlasId: aid, field: 'merge.delete', user, batchId,
         oldValue: `atlas_id ${aid} (duplicate merged into ${survivorId})`, newValue: null,
+        snapshot: { table: 'atlas', row: doomedRow, mergedInto: survivorId },
       });
     }
     await conn.execute(
@@ -152,6 +166,10 @@ export async function relinkSource({ table, sourceId, action, atlasId, user }) {
         atlasId: previousAtlasId, field: `${table}.float`, user,
         oldValue: `${meta.idCol} ${sourceId} -> atlas_id ${previousAtlasId}`,
         newValue: `${meta.idCol} ${sourceId} floating`,
+        snapshot: {
+          table, idCol: meta.idCol, ids: [sourceId],
+          from: previousAtlasId, to: null, floated: true,
+        },
       });
     } else {
       await conn.execute(
@@ -167,6 +185,12 @@ export async function relinkSource({ table, sourceId, action, atlasId, user }) {
         atlasId: Number(atlasId), field: `${table}.link`, user,
         oldValue: `${meta.idCol} ${sourceId} -> atlas_id ${previousAtlasId ?? 'floating'}`,
         newValue: `${meta.idCol} ${sourceId} -> atlas_id ${atlasId}`,
+        // previousAtlasId may be null, which means it was floating -- undoing
+        // has to restore that state, not link it to nothing.
+        snapshot: {
+          table, idCol: meta.idCol, ids: [sourceId],
+          from: previousAtlasId, to: Number(atlasId), wasFloating: previousAtlasId == null,
+        },
       });
     }
   });
@@ -187,10 +211,14 @@ export async function deleteAtlasIfOrphaned({ atlasId, user }) {
       { status: 409 });
   }
   await tx(async (conn) => {
+    const [rows] = await conn.execute(
+      'SELECT * FROM atlas WHERE atlas_id = ? LIMIT 1', [atlasId]);
+    const row = rows && rows[0] ? rows[0] : null;
     await conn.execute('DELETE FROM atlas WHERE atlas_id = ?', [atlasId]);
     await logAudit(conn, {
       atlasId, field: 'atlas.delete', user,
       oldValue: `atlas_id ${atlasId} (orphaned, deleted on confirm)`, newValue: null,
+      snapshot: { table: 'atlas', row },
     });
   });
   return { deleted: atlasId };

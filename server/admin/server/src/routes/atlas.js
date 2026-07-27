@@ -7,6 +7,7 @@ import {
 } from '../lib/atlas.js';
 import { getSourceIds, getSourceLinks } from '../lib/merge.js';
 import { getSourceDetail } from '../lib/sourceDetail.js';
+import { parseExternalIds } from '../lib/externalIds.js';
 import { computeIdentity } from '../lib/identity.js';
 import { buildAtlasSearch } from '../lib/search.js';
 import {
@@ -101,6 +102,9 @@ router.get('/:id', async (req, res) => {
     _manual_links: manualLinks,
     // Full mapped source rows for the side panel (issue #286).
     _source_detail: sourceDetail,
+    // The scraper's own external_ids blob, rendered as links. Read-only: the
+    // scraper rewrites that column wholesale on every refresh.
+    _scraped_links: parseExternalIds(row.external_ids),
     _parent_options: parentOptions,
   });
 });

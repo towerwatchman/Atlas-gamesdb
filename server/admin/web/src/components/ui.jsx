@@ -105,15 +105,19 @@ export function Notice({ kind, children, onClose }) {
   );
 }
 
-export function Modal({ title, onClose, children, footer }) {
+// `className` widens or otherwise varies the shell (see .modal-wide);
+// `bodyClassName` lets a caller take over the body's scrolling, which the atlas
+// editor needs so its two columns can scroll independently instead of the whole
+// body scrolling as one block.
+export function Modal({ title, onClose, children, footer, className = '', bodyClassName = '' }) {
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="panel modal" onClick={(e) => e.stopPropagation()}>
+      <div className={`panel modal ${className}`.trim()} onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h2>{title}</h2>
           <button className="x" onClick={onClose} aria-label="Close">×</button>
         </div>
-        <div className="modal-body">{children}</div>
+        <div className={`modal-body ${bodyClassName}`.trim()}>{children}</div>
         {footer && <div className="modal-foot">{footer}</div>}
       </div>
     </div>

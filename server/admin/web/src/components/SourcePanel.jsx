@@ -55,7 +55,7 @@ export default function SourcePanel({ detail }) {
 
   if (!list.length) {
     return (
-      <div className="panel panel-pad" style={{ background: 'var(--panel-2)' }}>
+      <div className="source-panel">
         <h3 style={{ fontSize: 14, margin: '0 0 4px', color: 'var(--muted)' }}>
           Mapped sources
         </h3>
@@ -70,7 +70,7 @@ export default function SourcePanel({ detail }) {
   const current = list[Math.min(active, list.length - 1)];
 
   return (
-    <div className="panel panel-pad" style={{ background: 'var(--panel-2)' }}>
+    <div className="source-panel">
       <h3 style={{ fontSize: 14, margin: '0 0 8px', color: 'var(--muted)' }}>
         Mapped sources{list.length > 1 ? ` (${list.length})` : ''}
       </h3>
@@ -105,7 +105,7 @@ export default function SourcePanel({ detail }) {
         )}
       </div>
 
-      <div className="table-wrap" style={{ maxHeight: 320, overflow: 'auto' }}>
+      <div className="table-wrap">
         <table>
           <tbody>
             {current.fields.map((f) => (
