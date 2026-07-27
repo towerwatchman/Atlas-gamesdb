@@ -37,6 +37,11 @@ function has(html, needle, msg) {
     throw new Error(`${msg || 'missing'}: expected to find ${JSON.stringify(needle)}`);
   }
 }
+function eq(a, b, msg) {
+  if (JSON.stringify(a) !== JSON.stringify(b)) {
+    throw new Error(`${msg || 'not equal'}: got ${JSON.stringify(a)}, want ${JSON.stringify(b)}`);
+  }
+}
 function lacks(html, needle, msg) {
   if (html.includes(needle)) {
     throw new Error(`${msg || 'unexpected'}: found ${JSON.stringify(needle)}`);
@@ -54,6 +59,7 @@ import Favicon from '${webSrc}/components/Favicon.jsx';
 import SourcePanel from '${webSrc}/components/SourcePanel.jsx';
 import LinkEditor from '${webSrc}/components/LinkEditor.jsx';
 import AdminActivity from '${webSrc}/pages/AdminActivity.jsx';
+import { DateField, LockToggle, epochToLocalInput, localInputToEpoch } from '${webSrc}/components/FieldControls.jsx';
 import AtlasList from '${webSrc}/pages/AtlasList.jsx';
 import Queue from '${webSrc}/pages/Queue.jsx';
 
@@ -61,7 +67,10 @@ export function render(el) { return renderToStaticMarkup(el); }
 export function routed(el) {
   return renderToStaticMarkup(React.createElement(MemoryRouter, null, el));
 }
-export { React, Favicon, SourcePanel, LinkEditor, AdminActivity, AtlasList, Queue };
+export {
+  React, Favicon, SourcePanel, LinkEditor, AdminActivity, AtlasList, Queue,
+  DateField, LockToggle, epochToLocalInput, localInputToEpoch,
+};
 `;
 
 async function bundle() {
@@ -373,6 +382,53 @@ async function main() {
   test('Queue renders without data', () => {
     const html = routed(h(m.Queue));
     has(html, 'queue', 'page renders');
+  });
+
+  // ------------------------------------------------------- dates & locks
+  test('epoch <-> date input round-trips', () => {
+    const epoch = 1768953600;
+    const asInput = m.epochToLocalInput(epoch);
+    assert(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(asInput), `bad format: ${asInput}`);
+    eq(Number(m.localInputToEpoch(asInput)), epoch, 'round-trip must be lossless');
+  });
+
+  test('epoch conversion handles empty and junk', () => {
+    for (const v of ['', null, undefined, 0, -1, 'abc']) {
+      eq(m.epochToLocalInput(v), '', `epochToLocalInput(${JSON.stringify(v)})`);
+    }
+    eq(m.localInputToEpoch(''), '', 'empty input');
+    eq(m.localInputToEpoch('not-a-date'), '', 'junk input');
+  });
+
+  test('DateField shows a picker and the stored epoch', () => {
+    const html = render(h(m.DateField, { id: 'x', value: 1768953600, onChange() {} }));
+    has(html, 'type="datetime-local"', 'a real picker, not a number box');
+    has(html, '1768953600', 'the stored value stays visible');
+    has(html, 'clear', 'clearable');
+  });
+
+  test('DateField says so when unset', () => {
+    const html = render(h(m.DateField, { id: 'x', value: '', onChange() {} }));
+    has(html, 'not set', 'empty state');
+    lacks(html, 'clear', 'nothing to clear');
+  });
+
+  test('LockToggle renders per lock state', () => {
+    const locked = render(h(m.LockToggle, {
+      field: 'version', locked: true, lockable: true, onToggle() {},
+    }));
+    has(locked, 'will not overwrite', 'explains what locked means');
+    const open = render(h(m.LockToggle, {
+      field: 'version', locked: false, lockable: true, onToggle() {},
+    }));
+    has(open, 'may overwrite', 'explains what unlocked means');
+  });
+
+  test('LockToggle is absent for unlockable fields', () => {
+    const html = render(h(m.LockToggle, {
+      field: 'last_record_update', locked: false, lockable: false, onToggle() {},
+    }));
+    eq(html, '', 'last_record_update must not offer a lock');
   });
 
   // ------------------------------------------------------------- layout

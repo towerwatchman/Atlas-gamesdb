@@ -173,6 +173,52 @@ def _ensure_atlas_export_timestamp(values):
     return values
 
 
+# Columns an admin lock may never cover. `last_record_update` is export
+# bookkeeping the delta packager depends on -- if a lock could freeze it, the
+# row would drop out of every future package and its changes would never reach
+# clients. atlas_id is the key.
+_UNLOCKABLE_ATLAS_COLUMNS = {"atlas_id", "last_record_update"}
+
+
+def getLockedAtlasFields(atlas_id, db_type=None):
+    """Column names on this atlas row that an admin has locked.
+
+    Locks are set in the admin portal: editing a field there marks it as
+    human-owned. Returns a set; an empty set for rows with no locks, and for a
+    database that predates migration 008 (the column simply won't exist, which
+    is caught rather than raised so an un-migrated deploy still scrapes).
+    """
+    try:
+        rows = _run(
+            "SELECT locked_fields FROM atlas WHERE atlas_id = %s",
+            (atlas_id,), fetch="one")
+    except mysql_errors.ProgrammingError as exc:
+        # 1054 = unknown column: the database predates migration 008. Treat that
+        # as "no locks" so an un-migrated deploy still scrapes.
+        #
+        # Deliberately NOT a bare `except Exception`. If a connection drops or
+        # the query fails for any other reason, swallowing it here would report
+        # "no locks" and the crawl would go on to overwrite every admin edit on
+        # the row -- exactly the bug this function exists to prevent. Better to
+        # fail loudly; the UPDATE that follows would have failed anyway.
+        if getattr(exc, "errno", None) == 1054:
+            return set()
+        raise
+    if not rows:
+        return set()
+    raw = rows[0] if isinstance(rows, (list, tuple)) else rows
+    if isinstance(raw, dict):
+        raw = raw.get("locked_fields")
+    if not raw:
+        return set()
+    try:
+        parsed = json.loads(raw) if isinstance(raw, str) else raw
+    except (ValueError, TypeError):
+        return set()
+    if not isinstance(parsed, list):
+        return set()
+    return {str(f) for f in parsed} - _UNLOCKABLE_ATLAS_COLUMNS
+
 def updateAtlasById(atlas_id, values, db_type=None):
     """Update an existing atlas row in place by its atlas_id.
 
@@ -185,6 +231,19 @@ def updateAtlasById(atlas_id, values, db_type=None):
     if not values:
         return
     values = _ensure_atlas_export_timestamp(dict(values))
+
+    # Drop anything an admin has claimed. Without this the crawl overwrites
+    # human edits every time the thread is re-scraped -- the reason a corrected
+    # version number would silently revert to whatever the thread title says.
+    locked = getLockedAtlasFields(atlas_id, db_type)
+    if locked:
+        skipped = [c for c in values if c in locked]
+        for c in skipped:
+            values.pop(c, None)
+        if skipped:
+            print(f"  atlas {atlas_id}: keeping admin values for "
+                  f"{', '.join(sorted(skipped))}")
+
     cols = [c for c in values.keys() if c != "atlas_id"]
     if not cols:
         return

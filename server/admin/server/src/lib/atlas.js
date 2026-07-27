@@ -17,7 +17,35 @@ export const EDITABLE_ATLAS_COLUMNS = [
   'developer', 'creator', 'overview', 'censored', 'language', 'translations',
   'genre', 'tags', 'voice', 'os', 'release_date', 'length',
   'banner', 'banner_wide', 'cover', 'logo', 'wallpaper', 'previews',
+  // Export bookkeeping, editable on request but handled specially below and
+  // never lockable -- see LOCKABLE_ATLAS_COLUMNS.
+  'last_record_update',
 ];
+
+// Stored as epoch seconds. The UI renders a date picker for these instead of a
+// number box; typing 1768953600 by hand was the only way to set a date before.
+export const DATE_ATLAS_COLUMNS = ['release_date', 'last_record_update'];
+
+// Fields a human edit may claim, so the scraper stops overwriting them.
+//
+// last_record_update is excluded deliberately. It is what the delta packager
+// uses to decide which rows changed; locking it would freeze the row out of
+// every future package, so a locked game's edits would never reach clients.
+// The scraper must stay free to bump it.
+export const LOCKABLE_ATLAS_COLUMNS = EDITABLE_ATLAS_COLUMNS.filter(
+  (c) => c !== 'last_record_update');
+const LOCKABLE_SET = new Set(LOCKABLE_ATLAS_COLUMNS);
+
+/** Parse the locked_fields JSON array off an atlas row. */
+export function parseLockedFields(raw) {
+  if (!raw) return [];
+  let list = raw;
+  if (typeof raw === 'string') {
+    try { list = JSON.parse(raw); } catch { return []; }
+  }
+  if (!Array.isArray(list)) return [];
+  return [...new Set(list.map(String).filter((f) => LOCKABLE_SET.has(f)))].sort();
+}
 
 const EDITABLE_SET = new Set(EDITABLE_ATLAS_COLUMNS);
 
@@ -92,6 +120,17 @@ export async function editAtlasRow(atlasId, changes, user) {
 
   for (const [col, rawNew] of Object.entries(changes || {})) {
     if (!EDITABLE_SET.has(col)) continue;
+    // Written by the dedicated clause below, not the generic SET list, so it
+    // can't appear twice in one UPDATE.
+    if (col === 'last_record_update') {
+      const oldStamp = current[col] ?? null;
+      const newStamp = rawNew === '' || rawNew == null ? null : Number(rawNew);
+      if (String(oldStamp ?? '') !== String(newStamp ?? '')) {
+        auditRows.push({ field: `atlas.${col}`, oldVal: oldStamp, newVal: newStamp });
+        applied.push(col);
+      }
+      continue;
+    }
     const newVal = rawNew === '' ? null : rawNew;
     const oldVal = current[col] ?? null;
     // Compare as strings so 5 vs "5" from a form doesn't create noise.
@@ -107,14 +146,49 @@ export async function editAtlasRow(atlasId, changes, user) {
   if (!applied.length) return { changed: [] };
 
   const ts = nowEpoch();
+
+  // Editing a field marks it as human-owned so the next crawl leaves it alone
+  // (scraper/utils/db.py::updateAtlasById drops locked columns). Without this
+  // the edit silently reverts the next time the thread is scraped.
+  const alreadyLocked = parseLockedFields(current.locked_fields);
+  const nowLocked = [...new Set([
+    ...alreadyLocked,
+    ...applied.filter((c) => LOCKABLE_SET.has(c)),
+  ])].sort();
+  const locksChanged = nowLocked.join(',') !== alreadyLocked.join(',');
+
+  // Normally every write bumps last_record_update so the delta packager picks
+  // the row up. If the admin set it explicitly, that is the whole point of the
+  // edit -- use their value rather than stamping over it.
+  const explicitStamp = applied.includes('last_record_update');
+  const stamp = explicitStamp
+    ? (changes.last_record_update === '' || changes.last_record_update == null
+      ? null : Number(changes.last_record_update))
+    : ts;
+
   await tx(async (conn) => {
+    // Built as a list rather than interpolating `setParts` directly: when the
+    // only change is last_record_update, setParts is empty and a bare
+    // "SET , edited = 1" is a syntax error.
+    const sets = [
+      ...setParts,
+      'edited = 1', 'edited_at = ?', 'edited_by = ?',
+      'last_record_update = ?', 'locked_fields = ?',
+    ];
     await conn.execute(
-      `UPDATE atlas SET ${setParts.join(', ')},
-         edited = 1, edited_at = ?, edited_by = ?,
-         last_record_update = ?
-       WHERE atlas_id = ?`,
-      [...setParams, ts, user, ts, atlasId],
+      `UPDATE atlas SET ${sets.join(', ')} WHERE atlas_id = ?`,
+      [...setParams, ts, user,
+       explicitStamp ? stamp : ts,
+       nowLocked.length ? JSON.stringify(nowLocked) : null,
+       atlasId],
     );
+    if (locksChanged) {
+      await logAudit(conn, {
+        atlasId, field: 'atlas.lock', user,
+        oldValue: alreadyLocked.join(', ') || null,
+        newValue: nowLocked.join(', ') || null,
+      });
+    }
     for (const a of auditRows) {
       await logAudit(conn, {
         atlasId, field: a.field,
@@ -207,6 +281,43 @@ export async function createAtlasRow(fields, user) {
   });
 
   return { atlas_id: atlasId, id_name, short_name, title };
+}
+
+/**
+ * Lock or unlock individual fields on an atlas row.
+ *
+ * A locked field is one the scraper must leave alone. Editing a field locks it
+ * automatically; unlocking hands it back so the next crawl can update it again.
+ */
+export async function setFieldLock(atlasId, field, locked, user) {
+  atlasId = Number(atlasId);
+  if (!LOCKABLE_SET.has(field)) {
+    const why = field === 'last_record_update'
+      ? 'last_record_update is export bookkeeping — locking it would keep the '
+        + 'row out of every future package.'
+      : `"${field}" is not an editable column.`;
+    throw Object.assign(new Error(why), { status: 400 });
+  }
+  const row = await getAtlasRow(atlasId);
+  if (!row) throw Object.assign(new Error(`No atlas row #${atlasId}.`), { status: 404 });
+
+  const before = parseLockedFields(row.locked_fields);
+  const after = locked
+    ? [...new Set([...before, field])].sort()
+    : before.filter((f) => f !== field);
+  if (before.join(',') === after.join(',')) return { locked_fields: before, changed: false };
+
+  await tx(async (conn) => {
+    await conn.execute(
+      'UPDATE atlas SET locked_fields = ? WHERE atlas_id = ?',
+      [after.length ? JSON.stringify(after) : null, atlasId]);
+    await logAudit(conn, {
+      atlasId, field: locked ? 'atlas.lock' : 'atlas.unlock', user,
+      oldValue: before.join(', ') || null,
+      newValue: after.join(', ') || null,
+    });
+  });
+  return { locked_fields: after, changed: true };
 }
 
 export async function getAuditForAtlas(atlasId, limit = 200) {

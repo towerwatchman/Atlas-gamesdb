@@ -3,7 +3,8 @@ import { safeRouter } from '../lib/safeRouter.js';
 import { q } from '../lib/db.js';
 import {
   getAtlasRow, editAtlasRow, createAtlasRow, getAuditForAtlas, getRecentAudit,
-  EDITABLE_ATLAS_COLUMNS,
+  setFieldLock, parseLockedFields,
+  EDITABLE_ATLAS_COLUMNS, DATE_ATLAS_COLUMNS, LOCKABLE_ATLAS_COLUMNS,
 } from '../lib/atlas.js';
 import { getSourceIds, getSourceLinks } from '../lib/merge.js';
 import { getSourceDetail } from '../lib/sourceDetail.js';
@@ -52,6 +53,16 @@ router.get('/', async (req, res) => {
 
 router.get('/editable-columns', (req, res) => {
   res.json(EDITABLE_ATLAS_COLUMNS);
+});
+
+// Column metadata: which fields are dates (date picker rather than a number
+// box) and which can be locked against the scraper.
+router.get('/meta/columns', (req, res) => {
+  res.json({
+    editable: EDITABLE_ATLAS_COLUMNS,
+    dates: DATE_ATLAS_COLUMNS,
+    lockable: LOCKABLE_ATLAS_COLUMNS,
+  });
 });
 
 // Preview the identity keys the server would derive, so the create form can
@@ -105,6 +116,8 @@ router.get('/:id', async (req, res) => {
     // The scraper's own external_ids blob, rendered as links. Read-only: the
     // scraper rewrites that column wholesale on every refresh.
     _scraped_links: parseExternalIds(row.external_ids),
+    // Fields a human has claimed; the scraper skips these on its next crawl.
+    _locked_fields: parseLockedFields(row.locked_fields),
     _parent_options: parentOptions,
   });
 });
@@ -151,6 +164,17 @@ router.delete('/:id/manual-links/:linkId', async (req, res) => {
     const result = await removeManualLink(
       Number(req.params.id), Number(req.params.linkId), req.user.username);
     res.json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// PUT /api/atlas/:id/locks/:field  { locked: true|false }
+router.put('/:id/locks/:field', async (req, res) => {
+  try {
+    res.json(await setFieldLock(
+      Number(req.params.id), req.params.field,
+      Boolean(req.body?.locked), req.user.username));
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
   }

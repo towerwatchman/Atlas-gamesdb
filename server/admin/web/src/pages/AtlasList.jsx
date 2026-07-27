@@ -4,9 +4,15 @@ import { api, fmtTime } from '../lib/api.js';
 import { SourceBadges, SourceLinkList, Notice, Modal, Spinner } from '../components/ui.jsx';
 import LinkEditor from '../components/LinkEditor.jsx';
 import SourcePanel from '../components/SourcePanel.jsx';
+import { DateField, LockToggle, ExportStampWarning } from '../components/FieldControls.jsx';
 
 // Fields shown as a wide textarea rather than a single-line input.
 const LONG_FIELDS = new Set(['overview', 'tags', 'genre', 'previews', 'translations']);
+
+// Stored as epoch seconds; rendered with a picker rather than a number box.
+// Mirrors DATE_ATLAS_COLUMNS on the server, which the editor also fetches from
+// /api/atlas/meta/columns.
+const DATE_FIELDS = new Set(['release_date', 'last_record_update']);
 
 /**
  * Create a new atlas game (requirement 1).
@@ -214,7 +220,16 @@ function CreateModal({ onClose, onCreated }) {
           {rest.map((c) => (
             <div className="field" key={c} style={LONG_FIELDS.has(c) ? { gridColumn: '1 / -1' } : undefined}>
               <label htmlFor={`c-${c}`}>{c}</label>
-              {LONG_FIELDS.has(c) ? (
+              {DATE_FIELDS.has(c) ? (
+                <>
+                  <DateField
+                    id={`c-${c}`}
+                    value={draft[c] ?? ''}
+                    onChange={(v) => setDraft({ ...draft, [c]: v })}
+                  />
+                  {c === 'last_record_update' && <ExportStampWarning />}
+                </>
+              ) : LONG_FIELDS.has(c) ? (
                 <textarea id={`c-${c}`} value={draft[c] ?? ''} onChange={(e) => setDraft({ ...draft, [c]: e.target.value })} />
               ) : (
                 <input id={`c-${c}`} value={draft[c] ?? ''} onChange={(e) => setDraft({ ...draft, [c]: e.target.value })} />
@@ -235,6 +250,9 @@ function EditModal({ atlasId, onClose, onSaved }) {
   const [manualLinks, setManualLinks] = useState([]);
   const [sourceDetail, setSourceDetail] = useState([]);
   const [scrapedLinks, setScrapedLinks] = useState([]);
+  const [meta, setMeta] = useState({ dates: [], lockable: [] });
+  const [locked, setLocked] = useState([]);
+  const [lockBusy, setLockBusy] = useState(false);
   const [parentOptions, setParentOptions] = useState({ manual: [], sources: [] });
   const [notice, setNotice] = useState('');
   const [err, setErr] = useState('');
@@ -243,12 +261,15 @@ function EditModal({ atlasId, onClose, onSaved }) {
   // Pulled out of the effect so a revert can pull fresh data -- undoing a change
   // rewrites the row, the links and the history all at once.
   const reload = useCallback(async ({ resetDraft = true } = {}) => {
-    const [r, c, a] = await Promise.all([
+    const [r, c, a, m] = await Promise.all([
       api.get(`/api/atlas/${atlasId}`),
       api.get('/api/atlas/editable-columns'),
       api.get(`/api/atlas/${atlasId}/audit`),
+      api.get('/api/atlas/meta/columns'),
     ]);
     setRow(r); setCols(c); setAudit(a);
+    setMeta(m);
+    setLocked(r._locked_fields || []);
     setManualLinks(r._manual_links || []);
     setSourceDetail(r._source_detail || []);
     setScrapedLinks(r._scraped_links || []);
@@ -259,6 +280,17 @@ function EditModal({ atlasId, onClose, onSaved }) {
       setDraft(d);
     }
     return r;
+  }, [atlasId]);
+
+  const toggleLock = useCallback(async (field, next) => {
+    setErr(''); setLockBusy(true);
+    try {
+      const res = await api.put(`/api/atlas/${atlasId}/locks/${field}`, { locked: next });
+      setLocked(res.locked_fields || []);
+      setNotice(next
+        ? `"${field}" is locked \u2014 the scraper will leave it alone.`
+        : `"${field}" is unlocked \u2014 the next crawl may overwrite it.`);
+    } catch (e) { setErr(e.message); } finally { setLockBusy(false); }
   }, [atlasId]);
 
   useEffect(() => {
@@ -316,10 +348,26 @@ function EditModal({ atlasId, onClose, onSaved }) {
           <div className="grid-2">
             {cols.map((c) => (
               <div className="field" key={c} style={LONG_FIELDS.has(c) ? { gridColumn: '1 / -1' } : undefined}>
-                <label htmlFor={`f-${c}`}>
-                  {c}{changed.includes(c) ? <span style={{ color: 'var(--teal-bright)' }}> ●</span> : null}
+                <label htmlFor={`f-${c}`} className="row" style={{ gap: 6, alignItems: 'center' }}>
+                  <span>{c}{changed.includes(c) ? <span style={{ color: 'var(--teal-bright)' }}> ●</span> : null}</span>
+                  <LockToggle
+                    field={c}
+                    locked={locked.includes(c)}
+                    lockable={(meta.lockable || []).includes(c)}
+                    busy={lockBusy}
+                    onToggle={toggleLock}
+                  />
                 </label>
-                {LONG_FIELDS.has(c) ? (
+                {(meta.dates || []).includes(c) ? (
+                  <>
+                    <DateField
+                      id={`f-${c}`}
+                      value={draft[c] ?? ''}
+                      onChange={(v) => setDraft({ ...draft, [c]: v })}
+                    />
+                    {c === 'last_record_update' && <ExportStampWarning />}
+                  </>
+                ) : LONG_FIELDS.has(c) ? (
                   <textarea id={`f-${c}`} value={draft[c] ?? ''} onChange={(e) => setDraft({ ...draft, [c]: e.target.value })} />
                 ) : (
                   <input id={`f-${c}`} value={draft[c] ?? ''} onChange={(e) => setDraft({ ...draft, [c]: e.target.value })} />

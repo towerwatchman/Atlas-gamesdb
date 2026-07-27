@@ -16,7 +16,8 @@
     "dev": "npm run build --workspace @atlas-admin/web && npm run dev --workspace @atlas-admin/server",
     "test": "node tests/render.test.mjs",
     "test:api": "node tests/api.test.mjs",
-    "test:all": "node tests/render.test.mjs && node tests/api.test.mjs && node tests/revert.test.mjs",
-    "test:revert": "node tests/revert.test.mjs"
+    "test:all": "node tests/render.test.mjs && node tests/api.test.mjs && node tests/revert.test.mjs && node tests/locks.test.mjs",
+    "test:revert": "node tests/revert.test.mjs",
+    "test:locks": "node tests/locks.test.mjs"
   }
 }

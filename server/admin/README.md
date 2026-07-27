@@ -441,3 +441,76 @@ because deleting it would orphan that mapping.
 npm run test:revert   # 16 tests, including a full merge undo
 npm run test:all      # render + api + revert
 ```
+
+---
+
+## Editable dates, and making edits stick
+
+Migration: **`sql/008_field_locks.sql`**. This one also changes the **scraper**
+(`scraper/utils/db.py`), so both halves have to be deployed.
+
+### Why `version` never stuck
+
+`version` was always in `EDITABLE_ATLAS_COLUMNS` and `PATCH` always applied it.
+The problem was the other end: the scraper's `updateAtlasById()` writes whatever
+the crawl produced straight over the row, and **nothing ever read the `edited`
+flag**. So every admin edit to a scraper-owned field — version, title,
+developer, overview, tags — was silently reverted the next time that thread was
+crawled. Editing worked, then quietly undid itself.
+
+### Per-field locks
+
+`atlas.locked_fields` is a JSON array of columns the scraper must not touch on
+that row. Editing a field in the portal **locks it automatically**; the lock
+icon beside each field label hands it back.
+
+`scraper/utils/db.py::updateAtlasById` reads the column and drops those keys
+before the UPDATE, logging what it kept:
+
+```
+  atlas 25: keeping admin values for version
+```
+
+An array on the row rather than a side table, because the scraper reads it for
+every game it updates. Who locked what and when is already in `atlas_audit`.
+
+**`last_record_update` cannot be locked.** It is what the delta packager uses to
+decide which rows changed; locking it would freeze the game out of every future
+package, so its edits would never reach clients. The API refuses with that
+reason. The scraper must stay free to bump it.
+
+> The lookup catches only MySQL error 1054 (unknown column, i.e. a database that
+> predates this migration) and re-raises everything else. A bare `except` there
+> would report "no locks" on any transient failure and the crawl would go
+> straight back to overwriting admin edits — the exact bug this prevents.
+
+### Dates
+
+`release_date` and `last_record_update` are epoch seconds. They rendered as
+plain text inputs, so setting one meant typing `1768953600` by hand. Both now
+get a `datetime-local` picker that shows local time, keeps the stored epoch
+visible, and can be cleared. `/api/atlas/meta/columns` tells the UI which
+columns are dates and which are lockable.
+
+`last_record_update` is now editable, with two caveats surfaced in the UI:
+
+* Setting it **backwards** drops the game out of the next incremental package,
+  so the change won't reach clients until something bumps it again.
+* Every other edit still stamps it to `now()` — an explicit value wins, so the
+  field is actually settable, but a later unrelated edit will move it again.
+
+### API
+
+```
+GET /api/atlas/meta/columns          -> { editable, dates, lockable }
+PUT /api/atlas/:id/locks/:field      { locked: true|false }
+GET /api/atlas/:id                   -> ..., _locked_fields: ["version", ...]
+```
+
+```bash
+npm run test:locks   # 14 tests, including a real scraper write against a lock
+```
+
+That suite drives the actual `updateAtlasById()` code path and asserts a locked
+field survives while an unlocked one is still updated. It skips cleanly if the
+scraper's dependencies or `.env` aren't present.
