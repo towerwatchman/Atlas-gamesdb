@@ -59,6 +59,7 @@ import Favicon from '${webSrc}/components/Favicon.jsx';
 import SourcePanel from '${webSrc}/components/SourcePanel.jsx';
 import LinkEditor from '${webSrc}/components/LinkEditor.jsx';
 import AdminActivity from '${webSrc}/pages/AdminActivity.jsx';
+import Downloads from '${webSrc}/pages/Downloads.jsx';
 import { DateField, LockToggle, epochToLocalInput, localInputToEpoch } from '${webSrc}/components/FieldControls.jsx';
 import AtlasList from '${webSrc}/pages/AtlasList.jsx';
 import Queue from '${webSrc}/pages/Queue.jsx';
@@ -68,7 +69,7 @@ export function routed(el) {
   return renderToStaticMarkup(React.createElement(MemoryRouter, null, el));
 }
 export {
-  React, Favicon, SourcePanel, LinkEditor, AdminActivity, AtlasList, Queue,
+  React, Favicon, SourcePanel, LinkEditor, AdminActivity, AtlasList, Queue, Downloads,
   DateField, LockToggle, epochToLocalInput, localInputToEpoch,
 };
 `;
@@ -377,6 +378,16 @@ async function main() {
     has(html, 'Games', 'page title');
     has(html, 'Add a game', 'create button (requirement 1)');
     has(html, 'paste an id', 'updated search placeholder');
+  });
+
+  test('Downloads renders its loading state', () => {
+    const html = routed(h(m.Downloads));
+    has(html, 'Downloads', 'page title');
+    has(html, 'All channels', 'the channel dropdown');
+    has(html, 'Main', 'main option');
+    has(html, 'Nightly', 'nightly option');
+    has(html, 'All installers', 'the asset-type dropdown is still there');
+    has(html, 'rate limit', 'explains why it is proxied');
   });
 
   test('Queue renders without data', () => {

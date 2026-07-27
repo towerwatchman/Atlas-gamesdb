@@ -290,3 +290,59 @@ tbody tr.row-deferred:hover td { opacity: 1; }
     margin-top: 14px;
   }
 }
+
+/* --- downloads page ------------------------------------------------------- */
+.dl-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.dl-stat {
+  background: var(--panel-2);
+  border: 0.5px solid var(--hair);
+  border-radius: 14px;
+  padding: 14px 16px;
+}
+.dl-num { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.dl-lab { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.dl-sub { font-size: 12px; color: var(--muted); opacity: 0.75; margin-top: 4px; }
+
+.dl-thead {
+  display: flex; justify-content: space-between;
+  padding: 10px 16px;
+  background: var(--panel-2);
+  border-bottom: 0.5px solid var(--hair);
+  font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.dl-row {
+  display: flex; gap: 14px; align-items: center;
+  padding: 14px 16px;
+  border-bottom: 0.5px solid var(--hair);
+}
+.dl-row:last-child { border-bottom: none; }
+.dl-tag { font-weight: 600; font-size: 15px; }
+.dl-bar {
+  height: 6px; margin-top: 8px; overflow: hidden;
+  background: var(--hair); border-radius: 999px;
+}
+.dl-fill {
+  height: 100%; border-radius: 999px;
+  background: var(--teal-bright);
+  transition: width 0.35s ease;
+}
+.dl-chip {
+  font-size: 11px; color: var(--muted);
+  background: var(--panel); border: 0.5px solid var(--hair);
+  padding: 2px 7px; border-radius: 999px;
+}
+.dl-count {
+  font-size: 20px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  min-width: 64px; text-align: right;
+}
+@media (max-width: 520px) {
+  .dl-count { font-size: 17px; min-width: 48px; }
+  .dl-num { font-size: 23px; }
+}

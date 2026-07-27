@@ -574,3 +574,54 @@ Consequences, both now handled:
 
 `tests/reset-fixtures.sql` seeds a second f95 row on atlas 1 so these cases have
 data; run it between suites.
+
+---
+
+## Downloads page (release stats per version)
+
+New page at `/admin/downloads`, backed by `GET /api/releases`. Grew out of the
+standalone release-stats viewer; the substantive additions are a **channel**
+dropdown and a server-side cache.
+
+### Main vs nightly
+
+GitHub has no concept of a release channel, so it is inferred in
+`lib/releases.js::channelOf`:
+
+1. the tag or title containing "nightly" → **nightly** (a nightly published
+   without the prerelease flag set is still a nightly)
+2. otherwise the `prerelease` flag → **nightly**
+3. everything else → **main**
+
+Each row displays the channel it was placed in, so a tag this guesses wrong for
+is visible rather than quietly counted in the wrong total. If your nightlies use
+a different convention, that one function is the only thing to change.
+
+Drafts are excluded — they aren't public, so they shouldn't appear in public
+figures. So are `.blockmap`, `.yml`, `.sha256/512`, `.sig`, `.asc` and `.json`:
+electron-builder update metadata and checksums, not things a person downloads.
+Leaving them in roughly doubled the totals.
+
+### Why it goes through the server
+
+The standalone viewer fetched GitHub from the browser, unauthenticated — 60
+requests/hour **per IP**, shared by everyone on that network, and the page simply
+breaks once it runs out. The server now fetches once, caches for
+`RELEASES_CACHE_SECONDS` (default 600), and serves everyone from that. A
+**Refresh** button bypasses the cache.
+
+If a fetch fails, the last good payload is served with `stale: true` and the page
+says how old it is, rather than blanking on a rate-limit blip.
+
+Optional `GITHUB_TOKEN` in `server/.env` raises the limit to 5000/hour. It stays
+server-side and is never sent to the browser. `GITHUB_REPO` defaults to
+`towerwatchman/Atlas`.
+
+```bash
+npm run test:releases   # 19 tests, fixtures only — no GitHub calls
+```
+
+The suite stubs `fetch`, so it never touches the API (a test suite would exhaust
+the unauthenticated limit immediately). It covers the classification rules, that
+checksum noise is excluded, per-channel totals, pagination, cache hits, `force`,
+and stale-on-failure.
