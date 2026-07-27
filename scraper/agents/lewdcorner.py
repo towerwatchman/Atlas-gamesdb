@@ -65,8 +65,10 @@ import re
 import time
 
 from scraper.auth import LCSession
+from scraper.datatypes.data import data
 from scraper.datatypes.record import gameRecord
 from scraper.utils.epoch import epoch
+from scraper.agents.lc_detail import parse_lc_thread
 from scraper.utils.db import (
     UpdatetableDynamic, getAtlasIdByLcId, findIdByTitle,
     insertAtlas, updateAtlasById, atlasOwnedByOtherSource,
@@ -135,6 +137,16 @@ _ENGINE_BADGES = {
     "REN'PY", "UNITY", "UNREAL ENGINE", "RPGM", "HTML", "FLASH", "JAVA",
     "QSP", "WOLF RPG", "ADRIFT", "TADS", "RAGS", "WEBGL", "OTHERS",
 }
+
+
+def _verbose():
+    """Whether to print the per-page scrape detail. On by default.
+
+    A thread-page fetch takes a couple of seconds, so a run that only printed on
+    a database write looked like it had hung -- there was no way to tell whether
+    pages were being scraped at all. Set LC_VERBOSE=0 for the old terse output.
+    """
+    return os.environ.get("LC_VERBOSE", "1").strip().lower() not in ("0", "false", "no")
 
 
 def _jitter():
@@ -344,12 +356,21 @@ class lewdcorner:
             lc_ids = [it.get("id") for it in items]
             last_updates = getLcThreadUpdatesBulk(lc_ids, db_type)
 
-            for item in items:
+            total_items = len(items)
+            for index, item in enumerate(items, start=1):
+                # Printed for EVERY item, including ones that turn out to be
+                # unchanged. Without it a page of already-known games produced no
+                # output at all and the run looked stalled.
+                if _verbose():
+                    print(f"  [{index}/{total_items}] lc_id {item.get('id')} "
+                          f"{str(item.get('title') or '')[:60]}")
                 try:
                     result = self._process_item(item, db_type, full, last_updates)
                 except Exception as ex:   # one bad row shouldn't kill the run
                     print("item error:", ex)
                     continue
+                if _verbose() and result == "skipped":
+                    print("        unchanged")
                 if result == "added":
                     added += 1; page_changed += 1
                 elif result == "updated":
@@ -401,6 +422,11 @@ class lewdcorner:
                 stored_ts = getLcThreadUpdated(lc_id, db_type)
             if not full and item_ts <= stored_ts:
                 return "skipped"
+            # Past the freshness check the thread really has changed, so the
+            # post is re-read: a version bump means new download links, and
+            # usually new screenshots too.
+            self._apply_detail(
+                atlas, lc, self._fetch_detail(lc_id, lc.get("site_url")))
             if not atlasOwnedByOtherSource(existing_atlas_id, db_type):
                 atlas["last_record_update"] = now
                 updateAtlasById(existing_atlas_id, self._clean(atlas), db_type)
@@ -436,6 +462,10 @@ class lewdcorner:
 
         if len(exact_ids) == 1:
             linked_atlas_id = exact_ids[0]
+            # The atlas row is someone else's, but the lewdcorner row still
+            # needs its own banner, screens and download links.
+            self._apply_detail(
+                atlas, lc, self._fetch_detail(lc_id, lc.get("site_url")))
             lc["atlas_id"] = linked_atlas_id
             UpdatetableDynamic("lewdcorner", self._clean(lc), db_type)
             # The atlas row already exists (title written by an earlier scrape),
@@ -481,12 +511,188 @@ class lewdcorner:
                   + str(LC_REVIEW_FLOOR) + "); adding as new:", atlas["title"])
 
         # 3. Genuinely new -> insert a new atlas row + a new lewdcorner row.
+        # A new game always gets the full page scan; the listing alone has no
+        # overview, tags, downloads or full-size images, and if we insert
+        # without them nothing later comes back to fill them in.
+        self._apply_detail(atlas, lc, self._fetch_detail(lc_id, lc.get("site_url")))
         atlas["last_record_update"] = now
         new_atlas_id = insertAtlas(self._clean(atlas), db_type)
         lc["atlas_id"] = new_atlas_id
         UpdatetableDynamic("lewdcorner", self._clean(lc), db_type)
         print("  added lc_id", lc_id, "-> atlas_id", new_atlas_id, atlas["title"])
         return "added"
+
+    # ---- thread-page detail --------------------------------------------
+    # The API listing carries ids, prefixes, counts and THUMBNAILS. Everything
+    # else -- overview, tag list, download links, full-size images -- only
+    # exists on the thread page, so each game needs a page fetch. Same shape as
+    # the F95 agent: a full scan on first sight, and again when the thread has
+    # actually changed.
+    def _fetch_detail(self, lc_id, site_url):
+        """Fetch and parse one thread page. Returns a dict, or None on failure.
+
+        Retried because a single transient failure here would otherwise persist
+        a game with no overview, no tags and no downloads, and nothing would
+        ever come back to fill them in (the same trap F95_DETAIL_RETRIES exists
+        for on the other agent).
+        """
+        if not site_url:
+            return None
+        attempts = int(os.environ.get("LC_DETAIL_RETRIES", "2")) + 1
+        if _verbose():
+            print(f"      scraping thread page: {site_url}")
+        for attempt in range(1, attempts + 1):
+            started = time.time()
+            try:
+                _jitter()
+                res = self.session.get(site_url, timeout=30)
+                if res.status_code != 200:
+                    raise RuntimeError(f"HTTP {res.status_code}")
+                detail = parse_lc_thread(res.text)
+                # A page that parsed but yielded nothing usable is treated as a
+                # failure worth retrying -- it usually means a guest-gated or
+                # partially-rendered response rather than a genuinely empty post.
+                if not detail.get("overview") and not detail.get("screens") \
+                        and not detail.get("downloads"):
+                    raise RuntimeError("page parsed but carried no game data")
+                if _verbose():
+                    self._describe_detail(detail, time.time() - started)
+                return detail
+            except Exception as exc:                       # noqa: BLE001
+                print(f"    lc {lc_id} detail attempt {attempt}/{attempts} "
+                      f"failed: {exc}")
+        print(f"    lc {lc_id}: giving up on the thread page; "
+              f"listing-only data kept")
+        return None
+
+    @staticmethod
+    def _describe_detail(detail, elapsed):
+        """Print what the thread page actually yielded.
+
+        The point is being able to see, at a glance, whether the page scrape is
+        working: a line of zeroes means the parse found nothing and the record is
+        about to be stored with listing-only data.
+        """
+        screens = detail.get("screens") or []
+        downloads = detail.get("downloads") or []
+        tags = detail.get("tags") or []
+        print(f"        ok in {elapsed:.1f}s"
+              f" | overview {len(detail.get('overview') or '')} chars"
+              f" | tags {len(tags)}"
+              f" | screens {len(screens)}"
+              f" | downloads {len(downloads)}"
+              f" | banner {'yes' if detail.get('banner_url') else 'NO'}")
+
+        fields = detail.get("fields") or {}
+        if not fields:
+            # LC keeps developer/version/language/OS/links in a custom-field
+            # block. If it's missing, the page layout has changed and a lot of
+            # data is silently unavailable -- worth shouting about.
+            print("        !! no custom-field block found "
+                  "(developer/version/language/OS/links unavailable)")
+        else:
+            bits = []
+            if detail.get("developer"):
+                bits.append(f"developer={detail['developer']!r}")
+            if detail.get("version"):
+                bits.append(f"version={detail['version']!r}")
+            if detail.get("os"):
+                bits.append("os=" + "/".join(detail["os"]))
+            if detail.get("language"):
+                bits.append(f"lang={detail['language'][:40]!r}")
+            if bits:
+                print("        " + "  ".join(bits))
+
+        ext = detail.get("external_ids") or {}
+        if ext:
+            print("        external: "
+                  + ", ".join(f"{k}={v}" for k, v in sorted(ext.items())))
+        else:
+            print("        external: none found")
+
+        # Which hosts the downloads resolved to, so an undecoded masked link
+        # (every host reading "lewdcorner.com") is obvious.
+        if downloads:
+            hosts = {}
+            for dl in downloads:
+                hosts[dl.get("host") or "?"] = hosts.get(dl.get("host") or "?", 0) + 1
+            top = ", ".join(f"{h}x{c}" if c > 1 else h
+                            for h, c in sorted(hosts.items(), key=lambda kv: -kv[1])[:6])
+            print(f"        hosts: {top}")
+
+    @staticmethod
+    def _apply_detail(atlas, lc, detail):
+        """Merge thread-page data into the atlas/lewdcorner records.
+
+        Only ever fills or overwrites with something non-empty, so a thread whose
+        post has been trimmed cannot blank out data we already had.
+        """
+        if not detail:
+            return
+        if detail.get("overview"):
+            atlas["overview"] = detail["overview"]
+        if detail.get("tags"):
+            atlas["tags"] = ",".join(detail["tags"])
+            lc["tags"] = ",".join(detail["tags"])
+        # Developer / version / language / OS / release date all come from the
+        # thread's custom-field block, which is LC's structured metadata and the
+        # authoritative source -- so these OVERWRITE whatever the listing had,
+        # rather than only filling blanks.
+        if detail.get("developer"):
+            atlas["developer"] = detail["developer"]
+            atlas["creator"] = detail["developer"]
+        if detail.get("version"):
+            atlas["version"] = detail["version"]
+            if detail.get("version_mismatch"):
+                # The field and the title disagree. Posters update the title on
+                # every release and sometimes forget the field, so this is worth
+                # seeing in the log rather than silently taking one of them.
+                print(f"    lc {lc.get('lc_id')}: version field "
+                      f"{detail.get('version_field')!r} != title "
+                      f"{detail.get('version_title')!r} (using the field)")
+        if detail.get("language"):
+            atlas["language"] = detail["language"]
+        if detail.get("os"):
+            atlas["os"] = ", ".join(detail["os"])
+        if detail.get("release_date"):
+            atlas["release_date"] = detail["release_date"]
+
+        # Category / engine / status from the page's own prefix chips, matching
+        # how the F95 agent treats them as the source of truth.
+        for label in detail.get("prefixes") or []:
+            up = label.strip().strip("[]").upper()
+            if up in data.Tcategory():
+                atlas["category"] = label.strip().strip("[]")
+            elif up in data.Tengine():
+                atlas["engine"] = label.strip().strip("[]")
+            elif up in data.Tstaus():
+                atlas["status"] = label.strip().strip("[]")
+
+        # Images. `banner_url` and `screens` are the FULL-SIZE attachment URLs
+        # from the post -- deliberately not the API's thumbnails, and for
+        # screenshots deliberately the lightbox anchor's href rather than the
+        # nested <img src>, which is a ~267px thumbnail. See lc_detail.py note 2.
+        if detail.get("banner_url"):
+            lc["banner_url"] = detail["banner_url"]
+        screens = [s["url"] for s in (detail.get("screens") or []) if s.get("url")]
+        if screens:
+            lc["screens"] = ",".join(screens)
+        if detail.get("downloads"):
+            lc["downloads"] = json.dumps(detail["downloads"], ensure_ascii=False)
+
+        # Support/social ids found in the post, merged without displacing
+        # anything an earlier source already established.
+        if detail.get("external_ids"):
+            existing = atlas.get("external_ids")
+            merged = {}
+            if existing:
+                try:
+                    merged = json.loads(existing) if isinstance(existing, str) else dict(existing)
+                except (ValueError, TypeError):
+                    merged = {}
+            for key, value in detail["external_ids"].items():
+                merged.setdefault(key, value)
+            atlas["external_ids"] = json.dumps(merged, ensure_ascii=False)
 
     def _enqueue(self, item, atlas, lc, kind, candidates,
                  db_type=None, refresh_only=False, score=None):

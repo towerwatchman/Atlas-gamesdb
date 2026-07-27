@@ -155,3 +155,169 @@ WHERE a.external_ids IS NULL
    the repair tool can spot bad rows later.
 4. Add cases to `CLASSIFY_CASES`, including at least one legitimate slug that
    begins with a reserved word.
+
+## LewdCorner thread scraping
+
+`scraper/agents/lc_detail.py` is the LewdCorner counterpart to `f95_detail.py`.
+It shares `_classify_external` and `_embed_url`, so a fix to either applies to
+both sites.
+
+Four things about LC markup that are easy to get wrong, and silent when you do:
+
+**1. The opening post is not the first `div.bbWrapper` on the page.** XenForo
+renders the poster's signature/about block inside the user cell, which comes
+first in document order. On real threads the first two wrappers were the
+author's social links and project name; the actual post was the third. The body
+is located by `article.message--post` → `article.message-body` → `div.bbWrapper`.
+Taking the first match gives you a signature and an empty overview.
+
+**2. The real image is in the anchor, not the `<img>`.**
+
+```html
+<a href="https://lewdcorner.com/attachments/6236382_takeru-jpg.796466/" class="js-lbImage">
+  <img src="https://lewdcorner.com/data/attachments/793/793139-....jpg?hash=...">
+</a>
+```
+
+The `<img src>` is a generated ~267px thumbnail; the full-size original is the
+anchor's `href`. Reading `img.src` works and silently collects thumbnails —
+which is what the API already gave us, so the page fetch would buy nothing. The
+thumbnail is still recorded as `thumb`, just not as the image.
+
+The banner is the single `div.bbImageWrapper[data-src]` at the top of the post,
+and is de-duplicated against the screenshot list by attachment id.
+
+**3. Download links are masked.** Hosts are wrapped as
+`/masked/out?t=<token>&r=<base64 referrer>`, where the token is JWT-shaped:
+`<base64url payload>.<signature>`. The payload decodes to `{"u": "<real url>"}`.
+Decoding is local — no request, and the signature is ignored, since we're reading
+a URL rather than trusting a claim. Without this every download's host comes out
+as `lewdcorner.com`.
+
+**4. LC has no `Developer:` / `Version:` labels.** F95 threads carry an inline
+field list; LC threads only have `Overview:` and `DOWNLOAD ...` headings. Version
+and developer come from the trailing bracket groups in the title, the same
+fallback `f95_detail` uses. Category/engine/status come from the prefix chips.
+
+Two smaller traps, both covered by tests:
+
+* `h1.p-title-value` contains a FontAwesome thread-type icon whose `<title>`
+  reads "discussion". `get_text()` pulls it in, so every title parsed as
+  `"discussion Bright Past [v1.006] [Kosmos Games]"`.
+* `next_elements` walks *into* the `<b>Overview:</b>` label, so its own text was
+  captured and every overview began with a duplicated heading. One fixture also
+  repeats the heading as plain text in the post itself, which is in the source
+  but isn't part of the description.
+
+### The custom-field block is where the metadata actually lives
+
+LewdCorner keeps its structured game data in XenForo custom thread fields,
+rendered above the opening post:
+
+```html
+<div class="message-fields message-fields--before">
+  <dl class="pairs pairs--customField" data-field="Developer">
+    <dt>Developer Name</dt><dd>Xlab</dd>
+  </dl>
+  <dl class="pairs pairs--customField" data-field="donations">
+    <dt>Developer Links</dt><dd><div class="bbWrapper">
+      <a href="https://www.patreon.com/badhero">Patreon</a> - ...
+    </div></dd>
+  </dl>
+  ...
+```
+
+`extract_fields()` reads the whole block keyed by `data-field`:
+
+| `data-field` | Becomes |
+| --- | --- |
+| `Developer` | `developer` (and `creator`) |
+| `version` | `version` |
+| `Language` | `language` |
+| `OS` | `os` (list, from the `<li>` items) |
+| `dategamerelease` | `release_date` (epoch) |
+| `dateversionrelease` | `latest_update` (epoch) |
+| `donations` | `external_ids` — **the** source for support links |
+| `othergames` | `other_games` |
+
+Unrecognised fields are kept under their own lowercased key rather than dropped,
+so a field LC adds later still appears in the parsed output.
+
+This is why body-only parsing produced an empty `external_ids` on every sample:
+the developer's Patreon/Discord/Twitter links are in the `donations` field, not
+the post. Parsing Eternum's block yields exactly what production already holds
+for it — `patreon: onceinalifetime`, `subscribestar: caribdis`,
+`itch_url: caribdis.itch.io`, `discord: caribdisgames`,
+`twitter: Caribdis_games`.
+
+Three things to know:
+
+* **The version field goes stale.** On the Eternum fixture the field reads
+  `0.9.0` while the title reads `v0.9.5 Public` — posters update the title on
+  every release and sometimes forget the field. Both are kept
+  (`version_field` / `version_title`), `version_mismatch` is set, and the
+  scraper logs the disagreement. The field currently wins; flipping that is a
+  one-line change now that both values are carried.
+* **Long language lists are truncated at source**, e.g.
+  `"English, French, Italian, German, Spanish, +6"`. The missing entries are not
+  elsewhere on the page.
+* **Dates need their own parser.** LC renders them as `"Jul 26, 2026"`, and
+  `scraper.utils.epoch.ConvertToUnixTime` returns `0` for that format, so
+  `parse_lc_date()` handles it.
+
+### When the page is fetched
+
+Mirrors the F95 agent, wired into all three write paths in `lewdcorner.py`:
+
+| Case | Page fetched? |
+| --- | --- |
+| New game | Always — the listing has no overview, tags, downloads or full-size images, and nothing later comes back to fill them in |
+| Known thread, `thread_updated` newer | Yes — a version bump means new download links |
+| Known thread, unchanged | No (unless `full=True`) |
+| Linked to an existing atlas row | Yes — the atlas row is another source's, but the lewdcorner row still needs its own banner/screens/downloads |
+| `full=True` | Every page of the feed, and every game's thread page |
+
+Paced by `_jitter()` (`LC_DELAY_MIN` / `LC_DELAY_MAX`) and retried
+`LC_DETAIL_RETRIES` times (default 2). A page that parses but carries no
+overview, screens *or* downloads is treated as a failure worth retrying — that
+usually means a guest-gated or partially-rendered response rather than a
+genuinely empty post. After the retries are exhausted the game is still stored
+with listing-only data rather than skipped.
+
+`_apply_detail` only ever writes non-empty values, so a thread whose post has
+been trimmed cannot blank out data already held.
+
+### Seeing it happen
+
+A thread fetch takes a couple of seconds and originally printed nothing on
+success, so a run looked stalled and there was no way to tell whether pages were
+being scraped at all. With `LC_VERBOSE=1` (the default) each item prints:
+
+```
+  [1/30] lc_id 2117 Bright Past [v1.006] [Kosmos Games]
+      scraping thread page: https://lewdcorner.com/threads/bright-past-....2117/
+        ok in 2.3s | overview 710 chars | tags 32 | screens 12 | downloads 16 | banner yes
+        developer='Kosmos Games'  version='1.006'  os=Windows/Linux/MacOS/Android  lang='English, Russian, German, Portuguese'
+        external: discord=rwFbCQb, patreon=kosmosgames, subscribestar=kosmos-games
+        hosts: mega.nzx4, bzzhr.tox2, datanodes.tox2, pixeldrain.comx2
+  added lc_id 2117 -> atlas_id 16901 Bright Past [v1.006] [Kosmos Games]
+  [2/30] lc_id 19835 Esterium Project [v0.0002] [Kosmos Games]
+        unchanged
+```
+
+The progress line prints for **every** item including unchanged ones — a page of
+already-known games previously produced no output whatsoever.
+
+Three things in that summary are diagnostics rather than decoration:
+
+* **A line of zeroes** means the parse found nothing and the record is about to
+  be stored with listing-only data.
+* **`!! no custom-field block found`** means LC changed its layout and
+  developer/version/language/OS/links are all silently unavailable.
+* **The host list** makes an undecoded masked link obvious — every entry would
+  read `lewdcorner.com`.
+
+`LC_VERBOSE=0` restores the terse output.
+
+Fixtures: `scraper/fixtures/lc_*.html` (five real threads, CSRF tokens scrubbed),
+covered by `tests/test_lc_detail.py` (22 tests).
