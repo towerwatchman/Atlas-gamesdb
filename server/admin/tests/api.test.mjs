@@ -81,6 +81,33 @@ async function main() {
     assert(days >= 6.9 && days <= 7.1, `cookie lasts ${days.toFixed(2)} days, want ~7`);
   });
 
+  await test('#281 the cookie and the JWT expire at the same time', async () => {
+    // These come from two different mechanisms (res.cookie maxAge vs jwt
+    // expiresIn). If they drift, the session dies at whichever is shorter while
+    // the cookie sits there looking valid -- so pin them together.
+    const m = /Max-Age=(\d+)/i.exec(setCookie);
+    const cookieSeconds = Number(m[1]);
+    const token = cookie.split('=').slice(1).join('=');
+    const payload = JSON.parse(
+      Buffer.from(token.split('.')[1], 'base64url').toString('utf8'));
+    const tokenSeconds = payload.exp - payload.iat;
+    assert(Math.abs(tokenSeconds - cookieSeconds) <= 5,
+      `cookie lasts ${cookieSeconds}s but the token lasts ${tokenSeconds}s`);
+  });
+
+  await test('#281 /me reports the real expiry', async () => {
+    // Read off the JWT, so it reflects what the server will actually enforce
+    // rather than what .env claims. This is how a stale SESSION_HOURS becomes
+    // visible instead of surfacing as a surprise logout.
+    const { status, json } = await api('/admin/api/auth/me');
+    eq(status, 200, 'status');
+    assert(json.expires_at, 'no expires_at');
+    const hoursLeft = (json.expires_at - Math.floor(Date.now() / 1000)) / 3600;
+    assert(hoursLeft > 167 && hoursLeft <= 168.1,
+      `session has ${hoursLeft.toFixed(1)}h left, want ~168`);
+    eq(json.session_hours, 168, 'session_hours');
+  });
+
   // -------------------------------------------------------- search (#287)
   await test('#287 exact title ranks first', async () => {
     const { json } = await api('/admin/api/atlas?search=Eternum');
@@ -144,6 +171,16 @@ async function main() {
   await test('#287 shorter title wins at equal relevance', async () => {
     const { json } = await api('/admin/api/atlas?search=eternum');
     eq(json.rows[0].title, 'Eternum', 'short exact title should outrank the long fan remake');
+  });
+
+  await test('#287 a game with several source rows is listed once', async () => {
+    // Migration 002 dropped the UNIQUE on source.atlas_id, so a game can own
+    // more than one f95/lc row. Joined without grouping it appeared once per
+    // source row and `total` counted it repeatedly.
+    const { json } = await api('/admin/api/atlas?search=being%20dik');
+    eq(json.total, 1, 'total must count games, not source rows');
+    eq(json.rows.length, 1, 'and the row list must not repeat it');
+    assert(json.rows[0].f95_count >= 1, 'source count should be reported');
   });
 
   await test('#287 count matches the filtered rows', async () => {
@@ -224,10 +261,18 @@ async function main() {
     assert(f95.site_url.includes('f95zone.to'), 'site_url');
   });
 
-  await test('#286 single-source game returns one entry', async () => {
+  await test('#286 every source row is listed, including duplicates', async () => {
+    // Several rows from the SAME source are possible and are what the switcher
+    // is for; the panel must show each one, not collapse them.
     const { json } = await api('/admin/api/atlas/1');
-    eq(json._source_detail.length, 1, 'Being a DIK has only F95');
-    eq(json._source_detail[0].source, 'f95_zone', 'source');
+    const f95 = json._source_detail.filter((d) => d.source === 'f95_zone');
+    assert(f95.length >= 1, 'expected at least one f95 mapping');
+    const ids = f95.map((d) => d.id);
+    eq(ids.length, new Set(ids).size, 'each mapping should appear once');
+    for (const d of json._source_detail) {
+      assert(d.id, 'every entry needs an id for the switcher');
+      assert(d.source_label, 'and a label');
+    }
   });
 
   await test('#286 hand-created game has no mappings', async () => {

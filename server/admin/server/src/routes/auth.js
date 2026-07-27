@@ -7,6 +7,7 @@ import {
   verifyToken, COOKIE_NAME, cookieOptions,
 } from '../lib/auth.js';
 import { logAudit } from '../lib/atlas.js';
+import { env } from '../lib/env.js';
 import {
   createInvite, listInvites, revokeInvite, redeemInvite,
 } from '../lib/invites.js';
@@ -56,7 +57,14 @@ router.post('/logout', async (req, res) => {
 });
 
 router.get('/me', requireAuth, (req, res) => {
-  res.json({ username: req.user.username });
+  // `exp` comes from the JWT, so this is the real expiry the server will
+  // enforce -- not what .env claims. Surfacing it makes a stale SESSION_HOURS
+  // visible in the UI instead of only showing up as a surprise logout.
+  res.json({
+    username: req.user.username,
+    expires_at: req.user.exp ?? null,
+    session_hours: env.SESSION_HOURS,
+  });
 });
 
 // --- self-service registration via one-time invite code -------------------

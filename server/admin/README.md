@@ -514,3 +514,63 @@ npm run test:locks   # 14 tests, including a real scraper write against a lock
 That suite drives the actual `updateAtlasById()` code path and asserts a locked
 field survives while an unlocked one is still updated. It skips cleanly if the
 scraper's dependencies or `.env` aren't present.
+
+---
+
+## Session length: why raising the default did nothing
+
+`env.js` reads `process.env.SESSION_HOURS || 168`. A deployed
+`server/.env` containing `SESSION_HOURS=12` **overrides that default**, so
+raising it in code changed nothing for an existing install — logins kept
+expiring after 12 hours. Worse, the test that asserted "the cookie lasts a week"
+passed, because the test environment had no `SESSION_HOURS` set and so exercised
+the default rather than the deployment.
+
+Fix on the server:
+
+```bash
+sed -i 's/^SESSION_HOURS=.*/SESSION_HOURS=168/' server/.env
+pm2 restart atlas
+```
+
+To stop it happening silently again:
+
+* `server/.env.example` now ships `168` with a comment saying it overrides the
+  code default.
+* The **effective** value and where it came from are printed at startup, so it
+  shows up in the pm2 log:
+  ```
+  Sessions last 168h (7 days), from .env
+  ```
+* `GET /api/auth/me` returns `expires_at` (read off the JWT, so it is the expiry
+  the server will actually enforce) and `session_hours`.
+* A blank, zero, negative or non-numeric `SESSION_HOURS` falls back to the
+  default instead of minting a cookie that expires immediately.
+* `tests/api.test.mjs` now asserts the cookie's `Max-Age` and the JWT's lifetime
+  **agree**. They come from two different mechanisms (`res.cookie maxAge` vs
+  `jwt expiresIn`); if they drift, the session dies at whichever is shorter while
+  the cookie sits there looking valid.
+
+```bash
+npm run test:session   # 8 tests pinning how SESSION_HOURS resolves
+```
+
+## Correction: a game can have several rows from one source
+
+An earlier note here claimed each source maps at most once per game, because
+`scraper/tables/base.py` declares `atlas_id INT NOT NULL UNIQUE`.
+**That is not the live schema.** `sql/002_floating_sources.sql` drops that
+constraint on purpose — "multiple f95/lc rows may share one atlas_id" — and
+makes the column nullable so a source row can float unattached.
+
+Consequences, both now handled:
+
+* The mapped-sources switcher genuinely does switch between several ids of the
+  *same* source, not only across sources. `getSourceDetail` returns every row.
+* The atlas list query joins `f95_zone` and `lewdcorner`, so a game owning two
+  f95 rows was **listed twice and counted twice**. The query now groups by
+  `a.atlas_id`, aggregates the display ids, and counts with
+  `COUNT(DISTINCT a.atlas_id)`. `f95_count` / `lc_count` come back in each row.
+
+`tests/reset-fixtures.sql` seeds a second f95 row on atlas 1 so these cases have
+data; run it between suites.

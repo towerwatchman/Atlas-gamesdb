@@ -17,7 +17,7 @@ import cookieParser from 'cookie-parser';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-import { env } from './lib/env.js';
+import { env, sessionSummary } from './lib/env.js';
 import { requireAuth } from './lib/auth.js';
 import authRoutes from './routes/auth.js';
 import atlasRoutes from './routes/atlas.js';
@@ -84,6 +84,9 @@ app.use((err, req, res, next) => {
 
 app.listen(env.PORT, () => {
   console.log(`Atlas server listening on http://localhost:${env.PORT}`);
+  // Printed so a stale SESSION_HOURS in .env is obvious in the pm2 logs
+  // rather than only showing up as "I have to log in again".
+  console.log(`Sessions last ${sessionSummary()}`);
 });
 
 // Final safety net: a stray rejection anywhere should be logged, never fatal.

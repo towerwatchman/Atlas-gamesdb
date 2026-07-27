@@ -116,7 +116,10 @@ export function buildAtlasSearch({ search = '', edited } = {}) {
     if (idQuery !== null) {
       parts.push('CASE WHEN a.atlas_id = ? THEN 2000 ELSE 0 END');
       scoreParams.push(idQuery);
-      parts.push('CASE WHEN f.f95_id = ? OR l.lc_id = ? THEN 1500 ELSE 0 END');
+      // MAX(...) because the row query groups by a.atlas_id: a game may have
+      // several source rows (migration 002 dropped the UNIQUE on atlas_id), so
+      // this has to collapse to "did ANY of them match".
+      parts.push('MAX(CASE WHEN f.f95_id = ? OR l.lc_id = ? THEN 1500 ELSE 0 END)');
       scoreParams.push(idQuery, idQuery);
     }
     scoreSql = parts.join(' + ');

@@ -32,22 +32,30 @@ router.get('/', async (req, res) => {
   const lim = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200);
   const off = Math.max(parseInt(offset, 10) || 0, 0);
 
+  // GROUP BY, not a plain join. Migration 002 dropped the UNIQUE constraint on
+  // source.atlas_id so several f95/lc rows may share one atlas_id -- without
+  // grouping, those games appear once per source row and `total` counts them
+  // repeatedly. The source columns are aggregated for display and a count is
+  // returned so the UI can show that there is more than one.
   const rows = await q(
     `SELECT a.atlas_id, a.title, a.creator, a.developer, a.version,
             a.engine, a.status, a.id_name, a.edited, a.edited_at, a.edited_by,
-            f.f95_id, f.site_url AS f95_url,
-            l.lc_id, l.site_url AS lc_url,
+            MIN(f.f95_id) AS f95_id, MIN(f.site_url) AS f95_url,
+            MIN(l.lc_id) AS lc_id, MIN(l.site_url) AS lc_url,
+            COUNT(DISTINCT f.f95_id) AS f95_count,
+            COUNT(DISTINCT l.lc_id) AS lc_count,
             (${scoreSql}) AS _score
        ${joinSql}
        ${whereSql}
+       GROUP BY a.atlas_id
        ${orderSql}
        LIMIT ${lim} OFFSET ${off}`,
     params,
   );
-  // Same joins + WHERE as the row query, so the two can never disagree about
-  // what matched.
+  // COUNT(DISTINCT a.atlas_id) for the same reason, and built from the same
+  // fragment as the row query so the two can't disagree about what matched.
   const countRow = await q(
-    `SELECT COUNT(*) AS n ${joinSql} ${whereSql}`, countParams);
+    `SELECT COUNT(DISTINCT a.atlas_id) AS n ${joinSql} ${whereSql}`, countParams);
   res.json({ rows, total: countRow[0].n, limit: lim, offset: off });
 });
 
