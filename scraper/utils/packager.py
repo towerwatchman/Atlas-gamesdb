@@ -112,8 +112,13 @@ class packager:
 
     def createBackup(type, folder, start_time):
         # Raw table snapshot (for restore/archival), so external_ids is the
-        # stored value, NOT the manual-link overlay used in the client package.
-        # Manual links are backed up via their own table's dump if needed.
+        # stored value, NOT the manual-link overlay used in the client package --
+        # restoring merged values into atlas.external_ids would destroy the
+        # separation that keeps manual links safe from the scraper.
+        #
+        # atlas_manual_links is therefore dumped as its own table. Without it the
+        # snapshot was raw but INCOMPLETE, and a restore lost every admin-added
+        # external id.
         atlas_object = downloadBase(type, "atlas", start_time)
         f95_object = downloadBase(type, "f95_zone", start_time)
         lc_object = downloadBase(type, "lewdcorner", start_time)
@@ -139,6 +144,18 @@ class packager:
             "lewdcorner_backup_" + datetime.datetime.today().strftime("%Y%m%d"),
             "backup",
             lc_object,
+            False,
+        )
+        # Always the whole table, not a delta: these are hand-entered and carry
+        # no export timestamp to filter on.
+        manual_links = downloadManualLinks(type)
+        print(f"  manual links backed up: {len(manual_links)}")
+        packager.createFile(
+            type,
+            os.path.join(folder, "backup"),
+            "manual_links_backup_" + datetime.datetime.today().strftime("%Y%m%d"),
+            "backup",
+            manual_links,
             False,
         )
 

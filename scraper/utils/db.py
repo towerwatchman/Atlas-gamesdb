@@ -17,6 +17,7 @@ Refactor notes vs the original:
   * Credentials come from the environment via config (no plaintext here).
 """
 import json
+import re
 import time
 
 import mysql.connector
@@ -811,11 +812,102 @@ def findDlsiteMaker(table, circle_id, db_type=None):
 
 
 def downloadBase(db_type, table, start_time):
+    """Export rows for a table.
+
+    start_time > 0  -> the delta: rows changed since then.
+    start_time <= 0 -> EVERYTHING, including rows whose last_record_update is 0
+                       or NULL.
+
+    That second case used to be `WHERE last_record_update > 0`, which silently
+    excluded any row that had never had its export timestamp set -- from a FULL
+    package. Those rows (and anything hanging off them, such as admin manual
+    links) simply never reached a client, and nothing ever brought them back
+    because a full rebuild was exactly the thing that skipped them.
+    """
     _check_table(table)
+    if start_time and start_time > 0:
+        return _run(
+            f"SELECT * FROM {table} WHERE last_record_update > %s ORDER BY atlas_id",
+            (start_time,), fetch="all", dict_cursor=True,
+        )
     return _run(
-        f"SELECT * FROM {table} WHERE last_record_update > %s ORDER BY atlas_id",
-        (start_time,), fetch="all", dict_cursor=True,
+        f"SELECT * FROM {table} ORDER BY atlas_id",
+        (), fetch="all", dict_cursor=True,
     )
+
+
+# Manual links may be stored with an id, a url, or both -- the admin UI accepts
+# any of the three. Every kind therefore has to be read from BOTH columns and
+# the missing half derived, or links silently vanish from the export: a Steam
+# link added as a url had no ext_id and was dropped, and an itch link added as
+# an id had no url and was dropped.
+_STORE_ID_FROM_URL = {
+    "steam": re.compile(r"store\.steampowered\.com/(?:app|widget)/(\d+)", re.I),
+    "gog": re.compile(r"gog\.com/(?:[\w-]+/)?game/([\w-]+)", re.I),
+}
+_STORE_URL_FROM_ID = {
+    "steam": lambda i: f"https://store.steampowered.com/app/{i}/",
+    "gog": lambda i: f"https://www.gog.com/game/{i}",
+}
+
+# Where the scraper's own value for the same platform lives, so a manual link
+# that duplicates it is recognised instead of being listed twice.
+_SCRAPED_ID_KEYS = {
+    "steam": ("steam_appid", "steam_id"),
+    "gog": ("gog_id", "gog_appid"),
+}
+_SCRAPED_URL_KEYS = {
+    "itch": ("itch_url",),
+}
+
+# Store kinds export as an id set plus a backward-compatible scalar.
+_STORE_OUTPUT = {
+    "steam": ("steam_appid", "steam_appids"),
+    "gog": ("gog_id", "gog_ids"),
+}
+
+
+def _itch_url_from_id(value):
+    """An itch id may be a bare slug or already a host."""
+    v = str(value or "").strip().strip("/")
+    if not v:
+        return None
+    if "." in v:
+        return v if v.startswith("http") else f"https://{v}"
+    return f"https://{v}.itch.io"
+
+
+def _norm_url(value):
+    """Normalise a url for equality: scheme, www. and trailing / are noise.
+
+    Without this the scraper's "caribdis.itch.io" and a manual
+    "https://caribdis.itch.io" are two different strings and the same page ends
+    up exported twice.
+    """
+    v = str(value or "").strip().lower()
+    if not v:
+        return ""
+    v = re.sub(r"^https?://", "", v)
+    v = re.sub(r"^www\.", "", v)
+    return v.rstrip("/")
+
+
+def _dedupe(seq, key=None):
+    """Order-preserving de-duplication, optionally on a normalised key."""
+    seen = set()
+    out = []
+    for value in seq:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if not text:
+            continue
+        marker = key(text) if key else text
+        if not marker or marker in seen:
+            continue
+        seen.add(marker)
+        out.append(text)
+    return out
 
 
 def _merge_manual_links_into_external_ids(atlas_rows):
@@ -827,8 +919,8 @@ def _merge_manual_links_into_external_ids(atlas_rows):
 
     The client resolves Steam/GOG ids from external_ids, but the historic shape
     (`{"steam_appid": "123"}`) holds only ONE id per store. Manual linking allows
-    several (e.g. multiple Steam season appids under one atlas), so we add
-    array-valued fields alongside the scalar ones:
+    several (e.g. multiple Steam season appids under one atlas), so array-valued
+    fields are added alongside the scalar ones:
 
         {
           "steam_appid":  "111",                       # primary, backward compat
@@ -838,10 +930,18 @@ def _merge_manual_links_into_external_ids(atlas_rows):
           "itch": [...urls...], "custom": [...urls...]  # non-store links as urls
         }
 
-    Reconciliation: manual ids are UNIONED with any scraper-discovered id, manual
-    first (admin override), then de-duplicated preserving order. The scalar
-    `steam_appid`/`gog_id` becomes the first of the merged set so existing single
-    -id clients keep working; the primary is the manual one when present.
+    Three rules, each of which was previously broken:
+
+      * EVERY link is exported. A link may carry an id, a url, or both; the
+        missing half is derived where the platform allows it. Reading only one
+        column silently dropped Steam links added as a url and itch links added
+        as an id.
+      * A manual link that duplicates something already present appears ONCE.
+        Comparison is on a normalised url (scheme/www./trailing-slash stripped),
+        so the scraper's "caribdis.itch.io" and a manual
+        "https://caribdis.itch.io" are recognised as the same page.
+      * An unrecognised kind is exported under its own key rather than dropped,
+        so adding a link kind can't silently lose data here.
     """
     if not atlas_rows:
         return atlas_rows
@@ -850,18 +950,16 @@ def _merge_manual_links_into_external_ids(atlas_rows):
     if not atlas_ids:
         return atlas_rows
 
-    # Bulk-fetch manual links for exactly the atlas_ids in this batch.
     placeholders = ", ".join(["%s"] * len(atlas_ids))
     links = _run(
         f"SELECT atlas_id, kind, ext_id, url FROM atlas_manual_links "
-        f"WHERE atlas_id IN ({placeholders})",
+        f"WHERE atlas_id IN ({placeholders}) ORDER BY link_id",
         tuple(atlas_ids), fetch="all", dict_cursor=True,
     ) or []
 
-    # Group manual links per atlas_id. Normalize the key to int so a type
-    # mismatch between the atlas row's atlas_id and the manual-links atlas_id
-    # (e.g. int vs str from different queries/drivers) can't cause a silent miss
-    # where NO ids get added.
+    # Normalise the key to int so a type mismatch between the atlas row's
+    # atlas_id and the manual-links atlas_id (int vs str from different
+    # queries/drivers) can't cause a silent miss where NO ids get added.
     def _aid_key(v):
         try:
             return int(v)
@@ -869,35 +967,17 @@ def _merge_manual_links_into_external_ids(atlas_rows):
             return str(v).strip()
 
     by_atlas = {}
-    for l in links:
-        by_atlas.setdefault(_aid_key(l["atlas_id"]), []).append(l)
+    for link in links:
+        by_atlas.setdefault(_aid_key(link["atlas_id"]), []).append(link)
 
     if not by_atlas:
         return atlas_rows
 
-    def _dedupe(seq):
-        seen = set()
-        out = []
-        for v in seq:
-            if v is None:
-                continue
-            s = str(v).strip()
-            if not s or s in seen:
-                continue
-            seen.add(s)
-            out.append(s)
-        return out
-
-    def _kind(m):
-        return str(m.get("kind") or "").strip().lower()
-
     for row in atlas_rows:
-        aid = _aid_key(row.get("atlas_id"))
-        manual = by_atlas.get(aid)
+        manual = by_atlas.get(_aid_key(row.get("atlas_id")))
         if not manual:
             continue
 
-        # Parse the existing (scraper-written) external_ids blob.
         raw = row.get("external_ids")
         ext = {}
         if raw:
@@ -908,38 +988,77 @@ def _merge_manual_links_into_external_ids(atlas_rows):
         if not isinstance(ext, dict):
             ext = {}
 
-        # Collect manual ids/urls per kind (case-insensitive kind match).
-        manual_steam = [m["ext_id"] for m in manual if _kind(m) == "steam" and m.get("ext_id")]
-        manual_gog = [m["ext_id"] for m in manual if _kind(m) == "gog" and m.get("ext_id")]
-        manual_itch = [m["url"] for m in manual if _kind(m) == "itch" and m.get("url")]
-        manual_custom = [m["url"] for m in manual if _kind(m) == "custom" and m.get("url")]
+        # Group by kind, resolving each link to (id, url) with whichever half
+        # can be derived from the other.
+        grouped = {}
+        for link in manual:
+            kind = str(link.get("kind") or "").strip().lower()
+            if not kind:
+                continue
+            ext_id = str(link.get("ext_id") or "").strip() or None
+            url = str(link.get("url") or "").strip() or None
 
-        # Steam: union manual (first, admin override) + scraped scalar.
-        if manual_steam:
-            scraped = [ext.get("steam_appid"), ext.get("steam_id")]
-            steam_all = _dedupe(manual_steam + scraped)
-            if steam_all:
-                ext["steam_appids"] = steam_all
-                ext["steam_appid"] = steam_all[0]
+            if not ext_id and url and kind in _STORE_ID_FROM_URL:
+                found = _STORE_ID_FROM_URL[kind].search(url)
+                if found:
+                    ext_id = found.group(1)
+            if not url and ext_id:
+                if kind in _STORE_URL_FROM_ID:
+                    url = _STORE_URL_FROM_ID[kind](ext_id)
+                elif kind == "itch":
+                    url = _itch_url_from_id(ext_id)
 
-        # GOG: same treatment.
-        if manual_gog:
-            scraped_g = [ext.get("gog_id"), ext.get("gog_appid")]
-            gog_all = _dedupe(manual_gog + scraped_g)
-            if gog_all:
-                ext["gog_ids"] = gog_all
-                ext["gog_id"] = gog_all[0]
+            if not ext_id and not url:
+                continue
+            grouped.setdefault(kind, []).append({"id": ext_id, "url": url})
 
-        # Non-store links: expose as url arrays under their kind.
-        if manual_itch:
-            ext["itch"] = _dedupe(list(ext.get("itch") or []) + manual_itch)
-        if manual_custom:
-            ext["custom"] = _dedupe(list(ext.get("custom") or []) + manual_custom)
+        for kind, entries in grouped.items():
+            if kind in _STORE_OUTPUT:
+                scalar_key, list_key = _STORE_OUTPUT[kind]
+                scraped = [ext.get(k) for k in _SCRAPED_ID_KEYS.get(kind, ())]
+                # Manual first: an admin id is an override of the scraped one.
+                ids = _dedupe([e["id"] for e in entries if e["id"]]
+                              + list(ext.get(list_key) or [])
+                              + scraped)
+                if ids:
+                    ext[list_key] = ids
+                    ext[scalar_key] = ids[0]
+                # A store link with no resolvable id (an unusual url shape) is
+                # still worth shipping as a url rather than being discarded.
+                urls_only = [e["url"] for e in entries if e["url"] and not e["id"]]
+                if urls_only:
+                    ext[f"{kind}_urls"] = _dedupe(
+                        list(ext.get(f"{kind}_urls") or []) + urls_only, key=_norm_url)
+                continue
+
+            # url-shaped kinds (itch, custom, and anything added later)
+            existing = list(ext.get(kind) or [])
+            scraped_urls = [ext.get(k) for k in _SCRAPED_URL_KEYS.get(kind, ())]
+            merged = _dedupe(
+                existing + [e["url"] for e in entries if e["url"]] + scraped_urls,
+                key=_norm_url)
+            if merged:
+                ext[kind] = merged
 
         row["external_ids"] = json.dumps(ext, ensure_ascii=False)
 
     return atlas_rows
 
+
+def downloadManualLinks(db_type=None):
+    """Every admin manual link, for the archival backup.
+
+    The backup dumps the raw atlas table deliberately -- with the export overlay
+    baked in, a restore would write merged values back into atlas.external_ids
+    and destroy the separation that keeps manual links safe from the scraper.
+    But that meant the backup contained no manual links at all, so a restore
+    silently lost every admin-added id. Dumping the table alongside keeps the
+    snapshot raw AND complete.
+    """
+    return _run(
+        "SELECT * FROM atlas_manual_links ORDER BY atlas_id, link_id",
+        (), fetch="all", dict_cursor=True,
+    ) or []
 
 def downloadAtlasBase(db_type, start_time):
     """Atlas export rows with admin manual links overlaid into external_ids.
@@ -960,7 +1079,7 @@ def downloadAtlasBase(db_type, start_time):
         manual_rows = _run(
             """
             SELECT a.* FROM atlas a
-             WHERE a.last_record_update <= %s
+             WHERE (a.last_record_update <= %s OR a.last_record_update IS NULL)
                AND EXISTS (SELECT 1 FROM atlas_manual_links m
                             WHERE m.atlas_id = a.atlas_id)
             """,

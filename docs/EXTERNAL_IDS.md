@@ -321,3 +321,73 @@ Three things in that summary are diagnostics rather than decoration:
 
 Fixtures: `scraper/fixtures/lc_*.html` (five real threads, CSRF tokens scrubbed),
 covered by `tests/test_lc_detail.py` (22 tests).
+
+---
+
+## Manual links in the export
+
+Admin-added links (`atlas_manual_links`) are overlaid onto `atlas.external_ids`
+**at export time only** — the stored column is never written, which is the whole
+reason the table exists separately from the scraper's data.
+
+Five ways links were being lost or duplicated, all now covered by
+`tests/test_manual_link_export.py`:
+
+**Links were read from one column each.** The admin UI accepts an id, a URL, or
+both. But the overlay read `ext_id` for steam/gog and `url` for itch/custom, so
+a Steam link added as a URL and an itch link added as an id were both silently
+dropped. Every kind is now read from both columns, deriving the missing half
+where the platform allows it (`store.steampowered.com/app/<id>` ⇄ id,
+`<slug>` → `https://<slug>.itch.io`).
+
+**Duplicates weren't recognised across spellings.** The scraper stores
+`itch_url: "caribdis.itch.io"`; an admin adding `https://caribdis.itch.io`
+produced a second entry, because the strings differ. Comparison is now on a
+normalised URL — scheme, `www.` and trailing slash stripped — so those collapse
+to one.
+
+**A full export skipped rows that had never been exported.** `downloadBase` used
+`WHERE last_record_update > %s`, and a full package passes `start_time = 0`. Any
+atlas row with `last_record_update` of `0` or `NULL` was therefore excluded from
+a *full rebuild*, taking its manual links with it — and a full rebuild was
+exactly the operation that should have repaired it. `start_time <= 0` now means
+everything, with no WHERE clause at all.
+
+> This makes full packages slightly larger, by however many rows had never had
+> their export timestamp set. Worth checking before the first run:
+> ```sql
+> SELECT COUNT(*) FROM atlas WHERE last_record_update IS NULL OR last_record_update <= 0;
+> ```
+
+**The delta's self-healing union missed NULL timestamps.** `last_record_update
+<= %s` is never true for `NULL`, so those rows weren't rescued in delta runs
+either. Now `<= %s OR IS NULL`.
+
+**An unrecognised kind was dropped entirely.** Only steam/gog/itch/custom were
+handled, so adding a link kind would have silently lost it here. Anything
+unknown now exports as a URL array under its own key.
+
+### The archival backup
+
+`createBackup` deliberately dumps the **raw** atlas table, without the overlay:
+restoring merged values into `atlas.external_ids` would destroy the separation
+that keeps manual links safe from the scraper. But that left the snapshot
+incomplete — a restore lost every admin-added id. `atlas_manual_links` is now
+dumped as its own file (`manual_links_backup_YYYYMMDD`), keeping the snapshot
+raw *and* complete.
+
+### Export shape
+
+```jsonc
+{
+  "steam_appid":  "999001",                        // primary, backward compatible
+  "steam_appids": ["999001", "999002", "1126320"], // manual first, then scraped
+  "gog_id": "...", "gog_ids": [...],
+  "itch":   ["https://caribdis.itch.io"],          // url-shaped kinds
+  "custom": ["https://blog.example.com/"],
+  "steam_urls": [...]                              // store link with no resolvable id
+}
+```
+
+Manual ids come first in the array and become the scalar, so an admin id is an
+override; existing single-id clients keep working unchanged.
