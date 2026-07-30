@@ -3,25 +3,42 @@
 Two separate trees go to two separate places, and they are configured
 independently:
 
-| Target | Local | Remote (default) | Then runs |
+| Target | Local | Remote | Then runs |
 | --- | --- | --- | --- |
-| `python` | repo root | `/opt/atlas-scraper` | nothing |
-| `node` | `server/admin` | `/opt/atlas/server/admin` | `npm install`, `npm run build`, `pm2 restart atlas` |
+| `python` | repo root | `/home/atlas/svr` | nothing (see below) |
+| `node` | `server/admin` | `/var/www/html/admin` | `npm install`, `npm run build`, `pm2 restart atlas` |
 
-**Set the real paths before your first deploy.** The defaults are a guess:
-`/opt/atlas/server/admin` comes from `server/admin/README.md`, but the scraper's
-actual location wasn't recorded anywhere in the repo, so
-`/opt/atlas-scraper` is a placeholder. Check with:
+These are the live paths, confirmed against the deployed server. If you ever need
+to re-derive them:
 
 ```bash
 pm2 list
 pm2 show atlas | grep -i 'exec cwd\|script path'
-crontab -l                      # whatever calls api.py / backup.py
-systemctl cat atlas-scraper 2>/dev/null
+pm2 show atlas-worker | grep -i 'exec cwd\|script path'
 ```
 
-Then either edit the Settings tab or `deploy.json` directly. Press **Test
-connection** — it reports whether each remote folder exists.
+**The `python` target should restart the refresh worker.** Its `post_commands` is
+empty, but `f95_refresh_worker.py` runs as a long-lived PM2 daemon holding
+imported `scraper/` code in memory — a deploy replaces the files on disk and the
+worker carries on running the old ones. Add:
+
+```json
+"post_commands": ["pm2 restart atlas-worker"]
+```
+
+Until then, restart it by hand after any deploy touching `scraper/**` or
+`f95_refresh_worker.py`. See [ATLAS_WORKER.md](ATLAS_WORKER.md).
+
+**Check the `node` target's `post_commands` match its `remote`.** Files deploy to
+`/var/www/html/admin`, but the post-commands currently `cd /opt/atlas/server/admin`
+before `npm install` / `npm run build`. Unless one path is a symlink to the other,
+the build runs in the wrong tree and the freshly-uploaded `web/src` is never
+compiled into `server/public` — the deploy looks clean and the site serves the old
+bundle. Either point the commands at `/var/www/html/admin` or confirm the symlink:
+
+```bash
+ls -ld /opt/atlas/server/admin /var/www/html/admin
+```
 
 ## Configuration
 
@@ -148,14 +165,16 @@ The log says so at the end of every run.
 3. Untick Dry run. Press Deploy. Type `deploy` to confirm.
 4. Watch `npm install` / `npm run build` / `pm2 restart atlas` in the log.
 
-For the Python target, restarting the refresh worker isn't automatic — if you
-changed scraper code the worker is using, add it to `post_commands`:
+For the Python target, restarting the refresh worker isn't automatic. It runs as
+a PM2 daemon (`atlas-worker`) with `scraper/` imported into memory, so new
+files on disk do nothing until it restarts:
 
 ```json
-"post_commands": ["pm2 restart f95-refresh-worker"]
+"post_commands": ["pm2 restart atlas-worker"]
 ```
 
-(only if that's actually how you run it — check `pm2 list` first).
+Confirm the process name with `pm2 list` if it was registered under something
+else. Full runbook: [ATLAS_WORKER.md](ATLAS_WORKER.md).
 
 ## Host keys
 

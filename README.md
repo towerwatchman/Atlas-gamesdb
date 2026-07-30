@@ -115,6 +115,22 @@ Positional flags to `api.py` (all `true`/`false`):
 When the scrape finishes it builds the downloadable package (`base`/`daily`
 `.update` files plus dated backups) in `PACKAGE_DIR`.
 
+### The Atlas worker (on-demand refreshes)
+
+`f95_refresh_worker.py` is a separate long-running process, not part of an
+`api.py` run. It consumes `f95_refresh_queue` — the table the admin portal's
+**F95 refresh** page writes to — and re-scrapes one game every 10 seconds. On the
+server it runs under PM2 as `atlas-worker`; if it isn't running, that page
+accepts requests that never get processed.
+
+```bash
+python f95_refresh_worker.py           # daemon (how it runs in production)
+python f95_refresh_worker.py --drain   # clear a backlog, then exit
+python f95_refresh_worker.py --once    # one item, then exit
+```
+
+Setup, PM2 commands, tuning and known gaps: [docs/ATLAS_WORKER.md](docs/ATLAS_WORKER.md).
+
 ### F95 listing source
 
 The F95 agent gets its listing from F95's own "latest updates" JSON feed
