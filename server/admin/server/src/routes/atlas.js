@@ -13,7 +13,7 @@ import { computeIdentity } from '../lib/identity.js';
 import { buildAtlasSearch } from '../lib/search.js';
 import {
   getManualLinks, addManualLink, updateManualLink, removeManualLink,
-  getParentOptions,
+  getParentOptions, getCustomLinkLabels,
   MANUAL_LINK_KINDS, STORE_KINDS, ENTRY_TYPES, PARENT_KINDS,
 } from '../lib/manualLinks.js';
 
@@ -146,6 +146,13 @@ router.get('/meta/manual-link-kinds', (req, res) => {
     entryTypes: ENTRY_TYPES,
     parentKinds: PARENT_KINDS,
   });
+});
+
+// Site-wide, not scoped to one game -- a custom link's name (Patreon, Discord,
+// official site...) is worth suggesting everywhere, not just on games that
+// already have one.
+router.get('/meta/custom-link-labels', async (req, res) => {
+  res.json({ labels: await getCustomLinkLabels() });
 });
 
 router.post('/:id/manual-links', async (req, res) => {

@@ -6,12 +6,12 @@ import React from 'react';
 // ---------------------------------------------------------------------------
 
 export const GROUP_LABEL = {
-  edit: 'Edit', merge: 'Merge', queue: 'Queue',
+  edit: 'Edit', revert: 'Revert', merge: 'Merge', queue: 'Queue',
   link: 'Link', auth: 'Auth', user: 'User', other: 'Other',
 };
 
 const GROUP_CLASS = {
-  edit: 'cl-edit', merge: 'cl-merge', queue: 'cl-queue',
+  edit: 'cl-edit', revert: 'cl-revert', merge: 'cl-merge', queue: 'cl-queue',
   link: 'cl-link', auth: 'cl-auth', user: 'cl-user', other: 'cl-other',
 };
 

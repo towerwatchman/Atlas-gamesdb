@@ -89,6 +89,28 @@ function decorate(row) {
   };
 }
 
+/**
+ * Distinct labels previously used on 'custom' links, most-used first.
+ *
+ * Backs a suggestion list on the "Add link" form so an admin naming a custom
+ * link (Patreon, Discord, official site...) sees what's already in use instead
+ * of retyping it, and so the same site doesn't end up spelled three different
+ * ways across different games. 'Link' is excluded -- that's normaliseCore's
+ * fallback for an unlabelled custom link, not something anyone chose.
+ */
+export async function getCustomLinkLabels(limit = 50) {
+  const lim = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200);
+  const rows = await q(
+    `SELECT label, COUNT(*) AS n
+       FROM atlas_manual_links
+      WHERE kind = 'custom' AND label IS NOT NULL AND label <> 'Link'
+      GROUP BY label
+      ORDER BY n DESC, label ASC
+      LIMIT ${lim}`,
+  );
+  return rows.map((r) => r.label);
+}
+
 /** All manual links for an atlas row, base games first then their DLC. */
 export async function getManualLinks(atlasId) {
   const rows = await q(

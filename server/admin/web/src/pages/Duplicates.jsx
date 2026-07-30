@@ -229,7 +229,7 @@ function MergeModal({ group, onClose, onDone, onRelinkDone }) {
 export default function Duplicates() {
   const [scope, setScope] = useState('all');
   const [floor, setFloor] = useState(0.90);
-  const [kinds, setKinds] = useState({ exact: true, fuzzy: true });
+  const [kinds, setKinds] = useState({ exact: true, fuzzy: false });
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [merging, setMerging] = useState(null);

@@ -7,6 +7,7 @@ const COLUMNS = [
   ['edit', 'Edits'],
   ['addition', 'Additions'],
   ['deletion', 'Deletions'],
+  ['revert', 'Reverts'],
   ['merge', 'Merges'],
   ['queue', 'Queue'],
   ['link', 'Links'],

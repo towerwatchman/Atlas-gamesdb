@@ -4,7 +4,7 @@ import { api } from '../lib/api.js';
 import { Notice, Spinner } from '../components/ui.jsx';
 import { ChangelogList, GROUP_LABEL } from '../components/changelog.jsx';
 
-const GROUPS = ['edit', 'merge', 'queue', 'link', 'auth', 'user', 'other'];
+const GROUPS = ['edit', 'revert', 'merge', 'queue', 'link', 'auth', 'user', 'other'];
 const PAGE = 50;
 
 // local date (yyyy-mm-dd) -> epoch seconds at start/end of that day
@@ -95,7 +95,7 @@ export default function Changelog() {
           <div className="cl-meta">
             <span className="hint">{total.toLocaleString()} {total === 1 ? 'entry' : 'entries'}{hasFilters ? ' (filtered)' : ''}</span>
           </div>
-          <ChangelogList entries={entries} onOpenGame={(id) => navigate(`/atlas?focus=${id}`)} />
+          <ChangelogList entries={entries} onOpenGame={(id) => navigate(`/admin/atlas?focus=${id}`)} />
 
           {pages > 1 && (
             <div className="pager">

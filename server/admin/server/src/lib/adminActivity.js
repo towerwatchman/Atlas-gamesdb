@@ -17,7 +17,15 @@ import { q, q1 } from './db.js';
 // Verb -> category. Order matters: the first matching prefix wins, so the
 // specific 'atlas.create' / 'atlas.delete' are tested before the generic
 // 'atlas.' field-edit prefix.
+//
+// A revert's field is written as `revert.<field-it-undid>` (see lib/revert.js),
+// e.g. 'revert.atlas.title' or 'revert.manual_link.add' -- so it would
+// otherwise fall through every rule below to 'other', regardless of what kind
+// of change it undid. Catching 'revert.' up front means "reverted something"
+// is its own visible category instead of disappearing into the least useful
+// bucket on the page.
 const CATEGORY_RULES = [
+  ['revert',   ['revert.']],
   ['addition', ['atlas.create', 'lc.new', 'user.add', 'invite.create']],
   ['deletion', ['atlas.delete', 'merge.delete']],
   ['merge',    ['merge.relink', 'merge.']],
@@ -30,8 +38,8 @@ const CATEGORY_RULES = [
 ];
 
 export const CATEGORIES = [
-  'edit', 'addition', 'deletion', 'merge', 'queue', 'link', 'refresh',
-  'user', 'auth', 'other',
+  'edit', 'addition', 'deletion', 'revert', 'merge', 'queue', 'link',
+  'refresh', 'user', 'auth', 'other',
 ];
 
 export function categoryFor(field) {

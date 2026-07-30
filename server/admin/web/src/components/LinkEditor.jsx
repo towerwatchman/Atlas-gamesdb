@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { api } from '../lib/api.js';
 import Favicon from './Favicon.jsx';
 
@@ -193,6 +193,13 @@ function LinkRow({ atlasId, link, links, options, onChanged, onRemoved, onError 
  * overwrites them. Store kinds (Steam / GOG / itch.io) additionally carry a
  * label, a game/DLC type, and — for a DLC — the mapping it belongs to. `custom`
  * links are plain web pages, so they get a name and nothing else.
+ *
+ * A custom link's name is suggested from what's already used elsewhere (see
+ * customLabels / getCustomLinkLabels on the server), so "Patreon" doesn't end
+ * up spelled three different ways across different games. It's a plain text
+ * input with a datalist, not a closed dropdown -- typing something new is
+ * always allowed, and it becomes a suggestion for the next admin as soon as
+ * it's saved.
  */
 export default function LinkEditor({
   atlasId, links, setLinks, options, setOptions, onError, onNotice, scrapedLinks,
@@ -205,6 +212,17 @@ export default function LinkEditor({
   const [parent, setParent] = useState('');
   const [busy, setBusy] = useState(false);
   const isStore = STORE_KINDS.has(kind);
+
+  // Previously-used custom-link names (Patreon, Discord, official site...),
+  // suggested via a datalist so an admin doesn't retype one that already
+  // exists elsewhere -- and so the same site doesn't end up spelled three
+  // different ways across different games' link lists.
+  const [customLabels, setCustomLabels] = useState([]);
+  useEffect(() => {
+    api.get('/api/atlas/meta/custom-link-labels')
+      .then((d) => setCustomLabels(d.labels || []))
+      .catch(() => {}); // suggestions are a nice-to-have; a failed fetch just means none show
+  }, []);
 
   async function refreshOptions() {
     try {
@@ -226,6 +244,9 @@ export default function LinkEditor({
         ...(isStore && entryType === 'dlc' ? decodeParent(parent) : {}),
       });
       setLinks([created, ...links]);
+      if (kind === 'custom' && created.label) {
+        setCustomLabels((prev) => (prev.includes(created.label) ? prev : [created.label, ...prev]));
+      }
       setLabel(''); setExtId(''); setUrl(''); setParent('');
       await refreshOptions();
     } catch (e) { onError(e.message); } finally { setBusy(false); }
@@ -283,7 +304,13 @@ export default function LinkEditor({
         <input
           placeholder={isStore ? 'Label (optional)' : 'Label (e.g. Patreon)'}
           value={label} onChange={(e) => setLabel(e.target.value)} style={{ flex: '1 1 130px' }}
+          list={kind === 'custom' ? 'custom-link-labels' : undefined}
         />
+        {kind === 'custom' && customLabels.length > 0 && (
+          <datalist id="custom-link-labels">
+            {customLabels.map((l) => <option key={l} value={l} />)}
+          </datalist>
+        )}
         <input placeholder="ID (optional)" value={extId} onChange={(e) => setExtId(e.target.value)} style={{ flex: '1 1 100px' }} />
         <input placeholder="https:// URL (optional)" value={url} onChange={(e) => setUrl(e.target.value)} style={{ flex: '2 1 180px' }} />
         {isStore && (

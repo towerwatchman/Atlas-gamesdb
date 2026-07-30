@@ -9,6 +9,12 @@ import { DateField, LockToggle, ExportStampWarning } from '../components/FieldCo
 // Fields shown as a wide textarea rather than a single-line input.
 const LONG_FIELDS = new Set(['overview', 'tags', 'genre', 'previews', 'translations']);
 
+// Of those, the ones that tend to hold real prose rather than a short tag list
+// get a taller starting box so an admin can see more than 3 lines without
+// resizing every time the modal opens. resize:vertical (styles.css) still lets
+// them drag it taller or shorter from there.
+const TALL_FIELDS = new Set(['overview']);
+
 // Stored as epoch seconds; rendered with a picker rather than a number box.
 // Mirrors DATE_ATLAS_COLUMNS on the server, which the editor also fetches from
 // /api/atlas/meta/columns.
@@ -230,7 +236,12 @@ function CreateModal({ onClose, onCreated }) {
                   {c === 'last_record_update' && <ExportStampWarning />}
                 </>
               ) : LONG_FIELDS.has(c) ? (
-                <textarea id={`c-${c}`} value={draft[c] ?? ''} onChange={(e) => setDraft({ ...draft, [c]: e.target.value })} />
+                <textarea
+                  id={`c-${c}`}
+                  className={TALL_FIELDS.has(c) ? 'textarea-tall' : undefined}
+                  value={draft[c] ?? ''}
+                  onChange={(e) => setDraft({ ...draft, [c]: e.target.value })}
+                />
               ) : (
                 <input id={`c-${c}`} value={draft[c] ?? ''} onChange={(e) => setDraft({ ...draft, [c]: e.target.value })} />
               )}
@@ -368,7 +379,12 @@ function EditModal({ atlasId, onClose, onSaved }) {
                     {c === 'last_record_update' && <ExportStampWarning />}
                   </>
                 ) : LONG_FIELDS.has(c) ? (
-                  <textarea id={`f-${c}`} value={draft[c] ?? ''} onChange={(e) => setDraft({ ...draft, [c]: e.target.value })} />
+                  <textarea
+                    id={`f-${c}`}
+                    className={TALL_FIELDS.has(c) ? 'textarea-tall' : undefined}
+                    value={draft[c] ?? ''}
+                    onChange={(e) => setDraft({ ...draft, [c]: e.target.value })}
+                  />
                 ) : (
                   <input id={`f-${c}`} value={draft[c] ?? ''} onChange={(e) => setDraft({ ...draft, [c]: e.target.value })} />
                 )}

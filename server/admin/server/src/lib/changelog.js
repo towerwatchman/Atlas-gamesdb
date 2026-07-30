@@ -14,8 +14,13 @@
 import { q, q1 } from './db.js';
 
 // Map a raw `field` verb to a coarse group for filtering + display colour.
+//
+// A revert's field is `revert.<field-it-undid>` (lib/revert.js), e.g.
+// 'revert.atlas.title' -- checked first so it doesn't fall through to 'other'
+// just because it doesn't literally start with 'atlas.'.
 export function actionGroup(field) {
   const f = String(field || '');
+  if (f.startsWith('revert.')) return 'revert';
   if (f.startsWith('atlas.')) return 'edit';
   if (f.startsWith('merge.')) return 'merge';
   if (f.startsWith('lc.') || f.startsWith('queue.')) return 'queue';
@@ -26,6 +31,7 @@ export function actionGroup(field) {
 }
 
 const GROUP_PREFIXES = {
+  revert: ['revert.'],
   edit: ['atlas.'],
   merge: ['merge.'],
   queue: ['lc.', 'queue.'],
