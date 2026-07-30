@@ -134,6 +134,26 @@ API_TASK = Task(
 )
 
 
+def _build_repair_argv(values):
+    """repair_external_ids takes --atlas-id once per id, so expand the field."""
+    argv = []
+    platform = values.get("platform")
+    if platform and platform != "(all)":
+        argv += ["--platform", platform]
+    for key, flag in (("enqueue", "--enqueue"), ("refetch", "--refetch"),
+                      ("apply", "--apply"), ("clear_all", "--clear-all")):
+        if values.get(key):
+            argv.append(flag)
+    for key, flag in (("limit", "--limit"), ("priority", "--priority"),
+                      ("csv_path", "--csv")):
+        raw = str(values.get(key) or "").strip()
+        if raw:
+            argv += [flag, raw]
+    for atlas_id in str(values.get("atlas_ids") or "").split():
+        argv += ["--atlas-id", atlas_id]
+    return argv
+
+
 TASKS: List[Task] = [
     API_TASK,
 
@@ -351,8 +371,15 @@ TASKS: List[Task] = [
         help=("Finds rows where a social/support id is actually a URL route "
               "instead of an account name -- e.g. a patreon id of \"c\", left "
               "behind when Patreon moved creators to patreon.com/c/<creator>. "
-              "Reporting is read-only; Enqueue only writes to "
-              "f95_refresh_queue, and the refresh worker does the fixing."),
+              "Reporting is read-only. Enqueue only writes to f95_refresh_queue "
+              "and lets the worker fix things. Refetch reads each page NOW and "
+              "is the only mode that can CLEAR external_ids -- which is how a "
+              "false positive gets repaired, since a normal refresh has nothing "
+              "to overwrite it with."),
+        danger=True,
+        danger_note=("Refetch + Apply overwrites external_ids from the live page, "
+                     "including clearing it when the page carries none."),
+        build_argv=_build_repair_argv,
         params=[
             Param("platform", "Platform", CHOICE, default="(all)",
                   arg="--platform",
@@ -369,6 +396,17 @@ TASKS: List[Task] = [
                   arg="--priority", help="Lower runs sooner."),
             Param("csv_path", "Also dump to CSV", FILE, default="",
                   arg="--csv"),
+            Param("refetch", "Refetch each page now (instead of queueing)", FLAG,
+                  default=False, arg="--refetch",
+                  help="Reads the live page and writes what it says."),
+            Param("apply", "Apply the refetch (writes to the database)", FLAG,
+                  default=False, arg="--apply",
+                  help="Without this, Refetch only reports what it would do."),
+            Param("clear_all", "Wipe the whole column when the page has none",
+                  FLAG, default=False, arg="--clear-all",
+                  help="Otherwise only the flagged keys are dropped."),
+            Param("atlas_ids", "Only these atlas ids", TEXT, default="",
+                  help="Space-separated. Blank = every flagged row."),
         ],
     ),
 

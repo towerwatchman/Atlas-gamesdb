@@ -65,6 +65,47 @@ can't be fixed by re-scraping F95).
 and `test_bad_external_values_matches_the_patterns` asserts the two can't drift
 apart — if a value is listed as a route, the classifier must actually reject it.
 
+### Clearing a false positive
+
+`--enqueue` can't fix a row whose page genuinely has no external ids, because
+`f95.py` does:
+
+```python
+ext = d.get("external_ids", {})
+if ext:                                  # an empty dict is falsy
+    atlas["external_ids"] = json.dumps(ext)
+```
+
+That guard is correct for a crawl — a partial or rate-limited fetch must never
+blank good data — but it means there is nothing to overwrite the bad value with,
+so a re-scrape leaves it exactly as it was.
+
+`--refetch` is the one path allowed to clear:
+
+```bash
+# see what it would do — reads the pages, writes nothing
+python tools/maintenance/repair_external_ids.py --refetch
+
+# just the handful you care about, wiping the column when the page has none
+python tools/maintenance/repair_external_ids.py --refetch --apply --clear-all \
+    --atlas-id 16647 --atlas-id 16899
+```
+
+| Page result | Without `--clear-all` | With `--clear-all` |
+| --- | --- | --- |
+| has external ids | replaced with what the page says | same |
+| has none | flagged keys dropped, others kept | whole column set to NULL |
+| **fetch failed** | **untouched** | **untouched** |
+
+That last row is the safety rule and the reason this is safe to run at all: a
+failed fetch is indistinguishable from an empty page, so it never writes.
+Without that distinction a transient 403 would wipe external ids across the
+library.
+
+Successful writes bump `last_record_update`, which is required rather than
+cosmetic — a corrected row that doesn't re-export leaves every client on the old
+value indefinitely.
+
 ## Repairing the stored rows
 
 The correct slug **cannot** be recovered from the database. Only the parsed value
@@ -366,6 +407,21 @@ either. Now `<= %s OR IS NULL`.
 **An unrecognised kind was dropped entirely.** Only steam/gog/itch/custom were
 handled, so adding a link kind would have silently lost it here. Anything
 unknown now exports as a URL array under its own key.
+
+### `steam_appid` vs `steam_appids`
+
+Both are produced, and they are not alternatives:
+
+| Field | Written by | Shape |
+| --- | --- | --- |
+| `steam_appid` | the scraper (`_classify_external`), then possibly overridden by the overlay | one id |
+| `steam_appids` | the manual-link overlay only, at export time | every id, manual first then scraped |
+
+`steam_appid` is the historic field and predates manual links. `steam_appids` is
+additive and is what the client reads for multi-id games.
+
+**The client source is not in this repository**, so anything about how it
+consumes these fields cannot be verified here.
 
 ### The archival backup
 

@@ -54,6 +54,7 @@ import argparse
 import csv
 import json
 import sys
+import time
 from collections import Counter, defaultdict
 
 from scraper.config import config
@@ -226,6 +227,135 @@ def enqueue(bad, limit=None, priority=50):
     return queued
 
 
+def refetch_and_apply(bad, limit=None, apply=False, clear_all=False):
+    """Re-read each affected game's page and write what it actually says.
+
+    This is the one place allowed to CLEAR external_ids. The normal scraper
+    deliberately won't: f95.py does
+
+        ext = d.get("external_ids", {})
+        if ext:
+            atlas["external_ids"] = json.dumps(ext)
+
+    and an empty dict is falsy, so a page carrying no external ids leaves the
+    stored value untouched. That's right for a crawl -- a partial or rate-limited
+    fetch must never blank good data -- but it also means a row flagged as a false
+    positive can never be repaired by a refresh, because there is nothing on the
+    page to overwrite it with.
+
+    The safety rule that makes clearing acceptable here: the page must have been
+    fetched AND parsed successfully. A failed fetch leaves the row alone. Without
+    that distinction a transient 403 would wipe external ids across the library.
+    """
+    from scraper.agents.f95 import f95
+    from scraper.auth import F95Session
+
+    targets = [r for r in bad if r["f95_id"]]
+    if limit:
+        targets = targets[:limit]
+    if not targets:
+        print("Nothing to refetch (no rows with an f95_zone link).")
+        return {}
+
+    print(bold(f"{'Refetching' if apply else 'DRY RUN: refetching'} "
+               f"{len(targets)} page(s)..."))
+    if apply:
+        print(yellow("  writes are ENABLED: a page with no external ids will "
+                     "CLEAR the stored value."))
+    print()
+
+    agent = f95(F95Session())
+    stats = Counter()
+
+    for row in targets:
+        atlas_id = row["atlas_id"]
+        f95_id = row["f95_id"]
+        stored = row["external_ids"]
+        hits = ", ".join(f"{k}={v!r}" for k, v in sorted(row["hits"].items()))
+        print(f"  atlas #{atlas_id} (f95 {f95_id}) {row['title'][:44]}")
+        print(dim(f"      flagged: {hits}"))
+
+        site_url = _site_url_for(f95_id)
+        if not site_url:
+            print(red("      no site_url on the f95_zone row; skipped"))
+            stats["no_url"] += 1
+            continue
+
+        scratch_atlas, scratch_f95 = {}, {}
+        try:
+            ok = agent._fetch_detail(site_url, scratch_atlas, scratch_f95,
+                                     retries=2)
+        except Exception as exc:                       # noqa: BLE001
+            print(red(f"      fetch raised: {exc}"))
+            stats["failed"] += 1
+            continue
+
+        if not ok:
+            # Deliberately no write. A failed fetch is indistinguishable from
+            # "the page has nothing", and guessing wrong here destroys data.
+            print(red("      fetch failed; leaving the row untouched"))
+            stats["failed"] += 1
+            continue
+
+        raw = scratch_atlas.get("external_ids")
+        found = {}
+        if raw:
+            try:
+                found = json.loads(raw) if isinstance(raw, str) else dict(raw)
+            except (ValueError, TypeError):
+                found = {}
+
+        if found:
+            new_value = json.dumps(found, ensure_ascii=False)
+            print(f"      page has: {', '.join(f'{k}={v}' for k, v in sorted(found.items()))}")
+            action = "replace"
+        elif clear_all:
+            new_value = None
+            print(yellow("      page has no external ids -> CLEARING the column"))
+            action = "clear"
+        else:
+            # Default: drop only the flagged keys, keep anything else that was
+            # already stored. A game can legitimately have a good discord id and
+            # a bad patreon one.
+            kept = {k: v for k, v in (stored or {}).items() if k not in row["hits"]}
+            new_value = json.dumps(kept, ensure_ascii=False) if kept else None
+            if kept:
+                print(yellow(f"      page has no external ids -> dropping "
+                             f"{', '.join(sorted(row['hits']))}, keeping "
+                             f"{', '.join(sorted(kept))}"))
+            else:
+                print(yellow("      page has no external ids -> CLEARING "
+                             "(nothing else was stored)"))
+            action = "prune"
+
+        if not apply:
+            print(dim(f"      would {action} (dry run)"))
+            stats[f"would_{action}"] += 1
+            continue
+
+        _run("UPDATE atlas SET external_ids = %s, last_record_update = %s "
+             "WHERE atlas_id = %s",
+             (new_value, int(time.time()), atlas_id), commit=True)
+        # Bumping last_record_update is required, not cosmetic: without it the
+        # corrected row never enters a delta package and clients keep the old
+        # value indefinitely.
+        print(f"      {action}d")
+        stats[action] += 1
+
+    print()
+    print(bold("Summary: ") + ", ".join(f"{k}={v}" for k, v in sorted(stats.items())))
+    if not apply:
+        print(dim("Dry run. Add --apply to write."))
+    return stats
+
+
+def _site_url_for(f95_id):
+    row = _run("SELECT site_url FROM f95_zone WHERE f95_id = %s LIMIT 1",
+               (f95_id,), fetch="one")
+    if not row:
+        return None
+    return row[0] if isinstance(row, (list, tuple)) else row.get("site_url")
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description="Find external_ids holding a URL route instead of an id.")
@@ -241,6 +371,20 @@ def main(argv=None):
                     help="Queue priority; lower runs sooner (default 50).")
     ap.add_argument("--csv", dest="csv_path", default=None,
                     help="Also write every affected row to this CSV.")
+    ap.add_argument("--refetch", action="store_true",
+                    help="Re-read each affected game's page NOW and write what it "
+                         "actually says. Unlike a normal refresh this may CLEAR "
+                         "external_ids when the page carries none -- which is how "
+                         "a false positive gets repaired. Dry run unless --apply.")
+    ap.add_argument("--apply", action="store_true",
+                    help="With --refetch, actually write.")
+    ap.add_argument("--clear-all", action="store_true",
+                    help="With --refetch, wipe the whole external_ids column when "
+                         "the page has none, instead of dropping only the flagged "
+                         "keys.")
+    ap.add_argument("--atlas-id", type=int, action="append", dest="atlas_ids",
+                    help="Only this atlas_id. Repeatable. Handy for fixing a "
+                         "known handful.")
     args = ap.parse_args(argv)
 
     print(dim(f"DB: {config.env_status()}"))
@@ -256,6 +400,23 @@ def main(argv=None):
         write_csv(bad, args.csv_path)
 
     if not bad:
+        return 0
+
+    if args.atlas_ids:
+        wanted = set(args.atlas_ids)
+        bad = [r for r in bad if r["atlas_id"] in wanted]
+        print(dim(f"Filtered to {len(bad)} row(s) by --atlas-id."))
+        if not bad:
+            print("None of those atlas ids are flagged.")
+            return 0
+
+    if args.refetch:
+        try:
+            refetch_and_apply(bad, limit=args.limit, apply=args.apply,
+                              clear_all=args.clear_all)
+        except (KeyboardInterrupt, EOFError):
+            print("\nInterrupted.")
+            return 1
         return 0
 
     if args.enqueue:

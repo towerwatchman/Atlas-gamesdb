@@ -164,6 +164,156 @@ def test_csv_output(tmp_path=None):
     assert everybody["f95_id"] == "300521"
 
 
+# --------------------------------------------------------------- refetch mode
+# The normal scraper will not clear external_ids: f95.py does
+#     ext = d.get("external_ids", {})
+#     if ext: atlas["external_ids"] = json.dumps(ext)
+# and an empty dict is falsy, so a page with no external ids leaves the stored
+# value alone. Right for a crawl -- a partial fetch must not blank good data --
+# but it means a false positive can never be repaired by a refresh. --refetch is
+# the one path allowed to clear, and only when the fetch actually SUCCEEDED.
+
+REFETCH_ROWS = [
+    # atlas_id, external_ids, f95_id, what the stubbed page returns
+    (880001, {"patreon": "c", "discord": "keepme"}, 880001, {"patreon": "real"}),
+    (880002, {"patreon": "c"}, 880002, {}),                    # false positive
+    (880003, {"patreon": "c", "discord": "keepme"}, 880003, None),  # fetch fails
+    (880004, {"patreon": "c", "discord": "keepme"}, 880004, {}),    # prune vs clear
+]
+
+
+def _install_refetch_stubs(monkey_writes):
+    """Stub the DB and the F95 agent; record every UPDATE instead of running it."""
+    import json as _json
+
+    def fake_run(sql, params=(), commit=False, fetch=None, dict_cursor=False):
+        low = " ".join(str(sql).split()).lower()
+        if low.startswith("update atlas set external_ids"):
+            monkey_writes.append({"value": params[0], "atlas_id": params[2]})
+            return None
+        if "from f95_zone where f95_id" in low:
+            return (f"https://f95zone.to/threads/x.{params[0]}/",)
+        rows = []
+        for atlas_id, ext, f95_id, _page in REFETCH_ROWS:
+            rows.append({"atlas_id": atlas_id, "title": f"Case {atlas_id}",
+                         "external_ids": _json.dumps(ext), "f95_id": f95_id})
+        return rows
+
+    class FakeAgent:
+        def _fetch_detail(self, site_url, atlas, f95rec, retries=0):
+            for atlas_id, _ext, _f95, page in REFETCH_ROWS:
+                if site_url.endswith(f".{atlas_id}/"):
+                    if page is None:
+                        return False                 # fetch failed
+                    if page:
+                        atlas["external_ids"] = _json.dumps(page)
+                    return True                      # parsed; may be empty
+            return False
+
+    import scraper.agents.f95 as f95mod
+    import scraper.auth as authmod
+    repair._run = fake_run
+    f95mod.f95 = lambda *a, **k: FakeAgent()
+    authmod.F95Session = lambda *a, **k: None
+
+
+def _refetch(apply=True, clear_all=False, only=None):
+    writes = []
+    _install_refetch_stubs(writes)
+    bad, _, _ = repair.find_bad_rows()
+    if only:
+        bad = [b for b in bad if b["atlas_id"] in only]
+    import io
+    import contextlib
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        stats = repair.refetch_and_apply(bad, apply=apply, clear_all=clear_all)
+    return writes, stats, buf.getvalue()
+
+
+def test_refetch_replaces_when_the_page_has_ids():
+    writes, stats, _ = _refetch(only={880001})
+    assert len(writes) == 1, writes
+    assert json.loads(writes[0]["value"]) == {"patreon": "real"}, writes
+    assert stats["replace"] == 1, stats
+
+
+def test_refetch_clears_a_false_positive():
+    """The whole point: nothing on the page, so the stored value must go."""
+    writes, stats, _ = _refetch(only={880002})
+    assert len(writes) == 1, writes
+    assert writes[0]["value"] is None, f"expected NULL, got {writes[0]['value']!r}"
+    assert stats["prune"] == 1, stats
+
+
+def test_refetch_never_writes_when_the_fetch_failed():
+    """The safety rule. A failed fetch is indistinguishable from an empty page.
+
+    Without this a transient 403 would wipe external ids across the library.
+    """
+    writes, stats, out = _refetch(only={880003})
+    assert writes == [], f"a failed fetch must not write: {writes}"
+    assert stats["failed"] == 1, stats
+    assert "leaving the row untouched" in out, out
+
+
+def test_refetch_keeps_unflagged_keys_by_default():
+    writes, _, _ = _refetch(only={880004})
+    assert json.loads(writes[0]["value"]) == {"discord": "keepme"}, writes
+
+
+def test_clear_all_wipes_the_whole_column():
+    writes, stats, out = _refetch(only={880004}, clear_all=True)
+    assert writes[0]["value"] is None, writes
+    assert stats["clear"] == 1, stats
+    assert "CLEARING the column" in out, out
+
+
+def test_refetch_dry_run_writes_nothing():
+    writes, stats, out = _refetch(apply=False)
+    assert writes == [], writes
+    assert any(k.startswith("would_") for k in stats), stats
+    assert "Add --apply to write" in out, out
+
+
+def test_refetch_bumps_the_export_timestamp():
+    """A corrected row that never re-exports leaves clients on the old value."""
+    writes = []
+    _install_refetch_stubs(writes)
+    real_run = repair._run
+
+    seen = []
+
+    def spy(sql, params=(), commit=False, fetch=None, dict_cursor=False):
+        if "update atlas set external_ids" in " ".join(str(sql).split()).lower():
+            seen.append(" ".join(str(sql).split()).lower())
+        return real_run(sql, params, commit, fetch, dict_cursor)
+
+    repair._run = spy
+    bad, _, _ = repair.find_bad_rows()
+    import io
+    import contextlib
+    with contextlib.redirect_stdout(io.StringIO()):
+        repair.refetch_and_apply([b for b in bad if b["atlas_id"] == 880002],
+                                 apply=True)
+    assert seen, "no UPDATE issued"
+    assert "last_record_update" in seen[0], \
+        f"the corrected row must be re-exported: {seen[0]}"
+
+
+def test_refetch_skips_rows_with_no_f95_link():
+    writes = []
+    _install_refetch_stubs(writes)
+    import io
+    import contextlib
+    with contextlib.redirect_stdout(io.StringIO()) as buf:
+        stats = repair.refetch_and_apply(
+            [{"atlas_id": 1, "title": "x", "f95_id": None, "hits": {"patreon": "c"},
+              "external_ids": {}}], apply=True)
+    assert writes == [], writes
+    assert stats == {}, stats
+
+
 def _run_all():
     fns = [(n, f) for n, f in sorted(globals().items())
            if n.startswith("test_") and callable(f)]

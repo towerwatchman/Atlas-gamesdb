@@ -88,12 +88,14 @@ def main():
             commit=True)
         return atlas_id
 
-    def add_link(atlas_id, kind, ext_id=None, url=None, label="t"):
+    def add_link(atlas_id, kind, ext_id=None, url=None, label="t",
+                 entry_type="game"):
         _run(
             """INSERT INTO atlas_manual_links
-                 (atlas_id, kind, label, ext_id, url, added_by, added_at)
-               VALUES (%s, %s, %s, %s, %s, 'test', 1)""",
-            (atlas_id, kind, label, ext_id, url), commit=True)
+                 (atlas_id, kind, label, ext_id, url, entry_type,
+                  added_by, added_at)
+               VALUES (%s, %s, %s, %s, %s, %s, 'test', 1)""",
+            (atlas_id, kind, label, ext_id, url, entry_type), commit=True)
 
     def ext_for(atlas_id, start_time=0):
         for row in downloadAtlasBase(None, start_time):
