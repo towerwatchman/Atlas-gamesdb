@@ -50,15 +50,24 @@ want a cron schedule wrapped around it — see [Why not cron](#why-not-cron).
 
 ```bash
 cd /home/atlas/svr
-pm2 start f95_refresh_worker.py --name atlas-worker --interpreter python3
+pm2 start f95_refresh_worker.py --name atlas-worker --interpreter /home/atlas/svr/.venv/bin/python
 pm2 save
 ```
 
-Substitute the venv interpreter if the scraper runs in one, e.g.
-`--interpreter /home/atlas/svr/venv/bin/python`. Check with
-`pm2 show atlas-worker | grep -i interpreter` if you're unsure what it picked
-up. `pm2 save` is what makes it come back after a reboot — without it the
-process is lost on restart.
+Must match whatever `api.py`/`backup.py` use in cron, or the dependencies
+installed for the scraper (`mysql-connector-python` etc.) won't be visible and
+the process errors out immediately with `ModuleNotFoundError: No module named
+'mysql'`. Confirm the venv path from the crontab if unsure:
+
+```bash
+crontab -l | grep -o '[^ ]*\.venv[^ ]*python'
+```
+
+`--interpreter python3` (bare, no path) only works if the scraper's
+dependencies are installed system-wide, which is not the case on this host.
+Check with `pm2 show atlas-worker | grep -i interpreter` if you're unsure what
+it's currently running. `pm2 save` is what makes it come back after a reboot —
+without it the process is lost on restart.
 
 ### Renaming an existing process
 
@@ -68,7 +77,7 @@ nothing is lost and any in-flight job just needs a Retry afterwards:
 ```bash
 pm2 delete atlas-f95-worker
 cd /home/atlas/svr
-pm2 start f95_refresh_worker.py --name atlas-worker --interpreter python3
+pm2 start f95_refresh_worker.py --name atlas-worker --interpreter /home/atlas/svr/.venv/bin/python
 pm2 save
 pm2 status atlas-worker
 ```
@@ -183,6 +192,82 @@ SELECT queue_id, f95_id, attempts, FROM_UNIXTIME(started_at) AS started
 There is also no attempts cap, so a permanently broken thread can be retried
 forever. Both are worth fixing properly (a stale-claim sweep at worker startup
 plus a `MAX_ATTEMPTS` check) if this becomes a nuisance.
+
+## Troubleshooting: queue has items but nothing is happening
+
+Work through in order — each step isolates one failure mode.
+
+**1. Is the process actually up?**
+
+```bash
+pm2 status atlas-worker
+```
+`errored` with a climbing restart count (↺) means it's crash-looping on
+startup, before it ever gets to claim a row. Go straight to the logs.
+
+**2. What do the logs say?**
+
+```bash
+pm2 logs atlas-worker --lines 100 --nostream
+```
+
+A healthy startup prints once:
+```
+Running -> MySQL @ <host>
+  env: <status>
+F95 refresh worker started (mode=daemon, interval=10s/job)
+```
+then one two-line block per job. If instead you see a traceback repeating on a
+loop, the process is crashing on import, before touching the queue at all.
+
+The one this has actually happened with:
+```
+ModuleNotFoundError: No module named 'mysql'
+```
+This means PM2's `--interpreter` doesn't have the scraper's dependencies
+installed — almost always because it was started with a bare `python3` while
+the scraper actually runs from a venv (check the crontab: if `api.py` /
+`backup.py` are invoked via `.venv/bin/python`, the worker needs the same
+interpreter). Fix:
+```bash
+pm2 delete atlas-worker
+cd /home/atlas/svr
+pm2 start f95_refresh_worker.py --name atlas-worker --interpreter /home/atlas/svr/.venv/bin/python
+pm2 save
+```
+Rows already sitting `pending` need no manual requeue — they get picked up as
+soon as the process starts cleanly.
+
+**3. Logs are clean but nothing is processing — is it pointed at the right DB?**
+
+The worker resolves `.env` from its own file location, independent of PM2's
+working directory:
+```bash
+pm2 show atlas-worker | grep -i 'exec cwd\|script path'
+cat /home/atlas/svr/.env | grep -E "DB_HOST|DB_NAME"
+```
+Confirm that matches what the admin server's `.env` uses. A worker quietly
+polling the wrong database looks identical to an idle one — banner fine, no
+job lines, no errors.
+
+**4. Check what the queue rows actually say:**
+
+```bash
+mysql -u root -p games -e \
+  "SELECT queue_id, f95_id, status, attempts, started_at, last_error FROM f95_refresh_queue ORDER BY queue_id;"
+```
+- `pending`, worker logs clean → give it one `REFRESH_INTERVAL` cycle, then
+  re-check step 1.
+- `processing` with a stale `started_at` → stranded by a crash/restart; see
+  [known gap](#known-gap-rows-stuck-in-processing) below.
+- `error` with something in `last_error` → that column says why, per row.
+
+**5. Everything above checks out and it's still stuck:**
+
+Possibly wedged inside a hung network call rather than crashed. `pm2 status`
+showing long uptime with zero restarts and no new log lines is the tell.
+`pm2 restart atlas-worker` is safe to try; any in-flight row will need a Retry
+afterward.
 
 ## Why not cron
 
