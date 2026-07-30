@@ -81,8 +81,15 @@ router.post('/merge', async (req, res) => {
   if (!groupIds.map(Number).includes(Number(survivorId))) {
     return res.status(400).json({ error: 'The row to keep must be part of the group.' });
   }
-  const result = await mergeAtlasGroup({ survivorId, groupIds, user: req.user.username });
-  res.json(result);
+  try {
+    res.json(await mergeAtlasGroup({ survivorId, groupIds, user: req.user.username }));
+  } catch (err) {
+    // mergeAtlasGroup et al. attach a real status (404 missing row, 409 still
+    // owned). Without this catch safeRouter forwarded them to the global handler,
+    // which replaced every one with a flat 500 "Something went wrong on the
+    // server" -- so the UI could never show the actual reason.
+    res.status(err.status || 500).json({ error: err.message });
+  }
 });
 
 // POST /api/duplicates/relink-source
@@ -94,10 +101,13 @@ router.post('/relink-source', async (req, res) => {
   if (!table || !sourceId || !['float', 'link'].includes(action)) {
     return res.status(400).json({ error: 'Provide table, sourceId, and a valid action.' });
   }
-  const result = await relinkSource({
-    table, sourceId: Number(sourceId), action, atlasId, user: req.user.username,
-  });
-  res.json(result);
+  try {
+    res.json(await relinkSource({
+      table, sourceId: Number(sourceId), action, atlasId, user: req.user.username,
+    }));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
 });
 
 // POST /api/duplicates/delete-orphan  { atlasId }
@@ -105,8 +115,11 @@ router.post('/relink-source', async (req, res) => {
 router.post('/delete-orphan', async (req, res) => {
   const { atlasId } = req.body || {};
   if (!atlasId) return res.status(400).json({ error: 'Missing atlasId.' });
-  const result = await deleteAtlasIfOrphaned({ atlasId, user: req.user.username });
-  res.json(result);
+  try {
+    res.json(await deleteAtlasIfOrphaned({ atlasId, user: req.user.username }));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
 });
 
 export default router;

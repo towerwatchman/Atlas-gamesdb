@@ -71,6 +71,48 @@ export async function tx(fn) {
 
 export { pool };
 
+// ---------------------------------------------------------------------------
+// Column introspection, cached per table for the life of the process.
+//
+// Needed because two write paths (the LC review queue's link/new actions) build
+// INSERT statements from JSON payloads the SCRAPER wrote, not from anything a
+// route validated. A single renamed or added key in the scraper's dict used to
+// surface as a raw 500 -- "Unknown column 'x' in 'INSERT INTO'" -- and took the
+// whole Review Queue page down with it. Filtering against the real schema turns
+// that class of schema drift into a dropped key we can report instead.
+//
+// The schema does not change while the process is up, so one query per table is
+// enough; migrations are applied out-of-band and the server is restarted after.
+// ---------------------------------------------------------------------------
+const columnCache = new Map();
+
+export async function tableColumns(table) {
+  checkTable(table);
+  if (columnCache.has(table)) return columnCache.get(table);
+  const rows = await q(
+    `SELECT COLUMN_NAME AS c FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`, [table]);
+  const set = new Set(rows.map((r) => r.c));
+  columnCache.set(table, set);
+  return set;
+}
+
+/**
+ * Split a column->value payload into the keys `table` actually has and the ones
+ * it does not. Callers insert `known` and report `unknown` rather than letting
+ * MySQL reject the statement.
+ */
+export async function splitByColumns(table, payload) {
+  const cols = await tableColumns(table);
+  const known = {};
+  const unknown = [];
+  for (const [k, v] of Object.entries(payload || {})) {
+    if (cols.has(k)) known[k] = v;
+    else unknown.push(k);
+  }
+  return { known, unknown };
+}
+
 /**
  * Bump an atlas row's last_record_update so the daily/base packager
  * (WHERE last_record_update > start_time) actually re-exports it.

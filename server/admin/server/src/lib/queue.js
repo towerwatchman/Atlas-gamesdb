@@ -7,9 +7,10 @@
 //   • dismissing it (drop from queue, make no link).
 // Candidates are re-derived live so the queue survives atlas changes.
 // ---------------------------------------------------------------------------
-import { q, q1, tx, touchAtlas } from './db.js';
+import { q, q1, tx, touchAtlas, splitByColumns } from './db.js';
 import { findFuzzyAtlasCandidates, findAtlasIdsByIdName } from './candidates.js';
-import { logAudit, EDITABLE_ATLAS_COLUMNS } from './atlas.js';
+import { logAudit, newBatchId, EDITABLE_ATLAS_COLUMNS } from './atlas.js';
+import { computeIdentity } from './identity.js';
 
 // Deferred items (deferred_at NOT NULL) sink below fresh ones; among deferred
 // rows the most-recently-deferred goes last, so repeatedly deferring cycles
@@ -54,16 +55,30 @@ function parseJson(s, fallback) {
   try { return s ? JSON.parse(s) : fallback; } catch { return fallback; }
 }
 
-/** Upsert a lewdcorner row (column->value dict) linked to atlasId. */
+/**
+ * Upsert a lewdcorner row (column->value dict) linked to atlasId.
+ *
+ * The payload comes from lc_review_queue.lc_payload, which the SCRAPER wrote --
+ * nothing in this process validated it. Keys the table does not have are
+ * dropped and returned so the caller can surface them, instead of MySQL
+ * rejecting the statement and the reviewer seeing a bare 500.
+ */
 async function upsertLewdcorner(conn, payload) {
-  const cols = Object.keys(payload);
-  if (!cols.length) return;
+  const { known, unknown } = await splitByColumns('lewdcorner', payload);
+  const cols = Object.keys(known);
+  if (!cols.length) {
+    throw Object.assign(
+      new Error('The queued LewdCorner payload has no usable columns, so there '
+        + 'is nothing to link. Re-scrape this thread and try again.'),
+      { status: 422 });
+  }
   const placeholders = cols.map(() => '?').join(', ');
   const updates = cols.map((c) => `${c}=VALUES(${c})`).join(', ');
-  const params = cols.map((c) => (typeof payload[c] === 'boolean' ? Number(payload[c]) : payload[c]));
+  const params = cols.map((c) => (typeof known[c] === 'boolean' ? Number(known[c]) : known[c]));
   await conn.execute(
     `INSERT INTO lewdcorner (${cols.join(', ')}) VALUES (${placeholders})
      ON DUPLICATE KEY UPDATE ${updates}`, params);
+  return unknown;
 }
 
 /** Link a queue item to an existing atlas row. */
@@ -74,8 +89,17 @@ export async function linkQueueItem(lcId, atlasId, user) {
   lcPayload.atlas_id = Number(atlasId);
   lcPayload.lc_id = Number(lcId);
 
+  // Confirm the target exists before writing anything. The FK would catch it,
+  // but as a raw 500 rather than a sentence the reviewer can act on.
+  const target = await q1(
+    'SELECT atlas_id FROM atlas WHERE atlas_id = ? LIMIT 1', [Number(atlasId)]);
+  if (!target) {
+    throw Object.assign(new Error(`No atlas row #${Number(atlasId)}.`), { status: 404 });
+  }
+
+  let dropped = [];
   await tx(async (conn) => {
-    await upsertLewdcorner(conn, lcPayload);
+    dropped = await upsertLewdcorner(conn, lcPayload);
     // The atlas row already exists (its title etc. were written earlier); linking
     // here would otherwise leave its last_record_update stale and the title row
     // would NOT re-export with this LC link -> client shows "LewdCorner #<id>".
@@ -87,22 +111,71 @@ export async function linkQueueItem(lcId, atlasId, user) {
       newValue: `linked lc_id ${lcId} -> atlas_id ${atlasId}`,
     });
   });
-  return { linked: true, atlas_id: Number(atlasId) };
+  return { linked: true, atlas_id: Number(atlasId), dropped_columns: dropped };
 }
 
 /** Create a fresh atlas row from the queued payload, then link the LC row. */
 export async function newFromQueueItem(lcId, user) {
   const item = await getQueueItem(lcId);
   if (!item) throw Object.assign(new Error('Queue item not found.'), { status: 404 });
-  const atlasPayload = parseJson(item.atlas_payload, {});
-  delete atlasPayload.atlas_id;
+  const rawPayload = parseJson(item.atlas_payload, {});
+  delete rawPayload.atlas_id;
+
+  // Drop keys `atlas` does not have. The payload is whatever the scraper or the
+  // reconciler serialised; an extra key used to abort the insert outright.
+  const { known: atlasPayload, unknown: dropped } = await splitByColumns('atlas', rawPayload);
+
+  // The queue row always carries a title even when the payload is thin, so fall
+  // back to it rather than letting MySQL complain that `title` has no default.
+  const title = String(atlasPayload.title ?? item.title ?? '').trim();
+  if (!title) {
+    throw Object.assign(
+      new Error(`Queued item ${lcId} has no title in its payload, so there is `
+        + 'nothing to create. Link it to an existing game, or re-scrape the thread.'),
+      { status: 422 });
+  }
+  atlasPayload.title = title;
+
+  // Identity keys are DERIVED, never trusted from the payload -- exactly as
+  // createAtlasRow does it. A row created here with a missing or hand-edited
+  // id_name would not be recognised by the next crawl, which would then insert a
+  // second atlas row for the same game.
+  const creator = String(atlasPayload.creator ?? item.creator ?? '').trim();
+  const { id_name, short_name } = computeIdentity(title, creator);
+  atlasPayload.id_name = id_name;
+  atlasPayload.short_name = short_name;
+
+  // Refuse a collision instead of creating the duplicate the key exists to
+  // prevent. POST /api/atlas has always done this; this path did not, so
+  // "Add as new game" could quietly produce two rows sharing one id_name.
+  const clash = await q1(
+    'SELECT atlas_id, title FROM atlas WHERE id_name = ? LIMIT 1', [id_name]);
+  if (clash) {
+    throw Object.assign(
+      new Error(`#${clash.atlas_id} "${clash.title}" already uses the identity key `
+        + `${id_name}, so this would create a duplicate. Link this thread to that `
+        + 'row instead.'),
+      { status: 409, atlasId: clash.atlas_id, idName: id_name });
+  }
+
+  const ts = Math.floor(Date.now() / 1000);
   // The queued payload may carry a stale (or no) last_record_update; force a
   // fresh one so the newly-created atlas row exports to clients.
-  atlasPayload.last_record_update = Math.floor(Date.now() / 1000);
+  atlasPayload.last_record_update = ts;
+  // Provenance: a human decided this row should exist, so flag it the way
+  // createAtlasRow does. Note we deliberately do NOT lock any fields -- the
+  // VALUES here are the scraper's, not a human's, so the next crawl should stay
+  // free to update them.
+  atlasPayload.edited = 1;
+  atlasPayload.edited_at = ts;
+  atlasPayload.edited_by = user;
+
   const lcPayload = parseJson(item.lc_payload, {});
   lcPayload.lc_id = Number(lcId);
 
   let newAtlasId;
+  let droppedLc = [];
+  const batchId = newBatchId();
   await tx(async (conn) => {
     const cols = Object.keys(atlasPayload);
     const placeholders = cols.map(() => '?').join(', ');
@@ -111,15 +184,21 @@ export async function newFromQueueItem(lcId, user) {
       `INSERT INTO atlas (${cols.join(', ')}) VALUES (${placeholders})`, params);
     newAtlasId = res.insertId;
     lcPayload.atlas_id = newAtlasId;
-    await upsertLewdcorner(conn, lcPayload);
+    droppedLc = await upsertLewdcorner(conn, lcPayload);
     await conn.execute('DELETE FROM lc_review_queue WHERE lc_id = ?', [lcId]);
     await logAudit(conn, {
-      atlasId: newAtlasId, field: 'lc.new', user,
+      atlasId: newAtlasId, field: 'lc.new', user, batchId,
       oldValue: `lc_id ${lcId} (queued, ${item.match_kind})`,
-      newValue: `created atlas_id ${newAtlasId} and linked lc_id ${lcId}`,
+      newValue: `created atlas_id ${newAtlasId} (${id_name}) and linked lc_id ${lcId}`,
+      snapshot: { table: 'atlas', createdId: newAtlasId },
     });
   });
-  return { created: true, atlas_id: newAtlasId };
+  return {
+    created: true,
+    atlas_id: newAtlasId,
+    id_name,
+    dropped_columns: [...new Set([...dropped, ...droppedLc])],
+  };
 }
 
 /** Drop a queue item without making any link. */

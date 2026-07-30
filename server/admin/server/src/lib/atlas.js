@@ -242,6 +242,12 @@ export async function createAtlasRow(fields, user) {
   const vals = [title, id_name, short_name];
   for (const col of EDITABLE_ATLAS_COLUMNS) {
     if (col === 'title') continue;
+    // Written exactly once by the bookkeeping clause below. It is a member of
+    // EDITABLE_ATLAS_COLUMNS *and* the create form offers a date picker for it,
+    // so listing it here too made MySQL reject the whole INSERT with
+    // "Column 'last_record_update' specified twice" the moment an admin filled
+    // that field in. editAtlasRow already skipped it for the same reason.
+    if (col === 'last_record_update') continue;
     if (!(col in (fields || {}))) continue;
     const raw = fields[col];
     const value = raw === '' || raw === undefined ? null : raw;
@@ -250,10 +256,19 @@ export async function createAtlasRow(fields, user) {
   }
 
   const ts = nowEpoch();
+  // An admin may set the export stamp explicitly on creation; if they did, keep
+  // their value rather than stamping over it (mirrors editAtlasRow). Junk falls
+  // back to "now" so the row still reaches the next incremental package.
+  const rawStamp = fields?.last_record_update;
+  const wantsStamp = rawStamp !== undefined && rawStamp !== null && String(rawStamp).trim() !== '';
+  const parsedStamp = wantsStamp ? Number(rawStamp) : NaN;
+  const explicitStamp = Number.isFinite(parsedStamp) && parsedStamp > 0;
+  const stamp = explicitStamp ? parsedStamp : ts;
+
   // One batch so the create and its per-field rows undo together.
   const batchId = newBatchId();
   cols.push('edited', 'edited_at', 'edited_by', 'last_record_update');
-  vals.push(1, ts, user, ts);
+  vals.push(1, ts, user, stamp);
 
   let atlasId;
   await tx(async (conn) => {
@@ -276,6 +291,14 @@ export async function createAtlasRow(fields, user) {
       await logAudit(conn, {
         atlasId, field: `atlas.${col}`, user, batchId,
         oldValue: null, newValue: String(vals[i]),
+      });
+    }
+    // Only audited when the admin chose it. An auto-stamp is bookkeeping and
+    // would just be noise in the history of every new row.
+    if (explicitStamp) {
+      await logAudit(conn, {
+        atlasId, field: 'atlas.last_record_update', user, batchId,
+        oldValue: null, newValue: String(stamp),
       });
     }
   });

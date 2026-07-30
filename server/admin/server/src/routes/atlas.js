@@ -6,7 +6,7 @@ import {
   setFieldLock, parseLockedFields,
   EDITABLE_ATLAS_COLUMNS, DATE_ATLAS_COLUMNS, LOCKABLE_ATLAS_COLUMNS,
 } from '../lib/atlas.js';
-import { getSourceIds, getSourceLinks } from '../lib/merge.js';
+import { getSourceIds, getSourceLinks, deleteAtlasIfOrphaned } from '../lib/merge.js';
 import { getSourceDetail } from '../lib/sourceDetail.js';
 import { parseExternalIds } from '../lib/externalIds.js';
 import { computeIdentity } from '../lib/identity.js';
@@ -190,6 +190,31 @@ router.put('/:id/locks/:field', async (req, res) => {
 
 router.get('/:id/audit', async (req, res) => {
   res.json(await getAuditForAtlas(Number(req.params.id)));
+});
+
+// DELETE /api/atlas/:id
+//
+// Deletes a game, but ONLY if no source row still references it -- the same rule
+// (and the same snapshot-and-audit path, so the delete stays revertible) as the
+// Duplicates page's "delete orphan" prompt. A game a source still owns must be
+// unlinked or floated first; deleting it would either break the FK or strand the
+// source row.
+//
+// This existed nowhere before: there was no way to remove a game added by
+// mistake, and tests/api.test.mjs's own cleanup called this route and silently
+// swallowed the 404, so every run leaked rows.
+router.delete('/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'Enter a positive whole atlas id.' });
+  }
+  const row = await getAtlasRow(id);
+  if (!row) return res.status(404).json({ error: `No atlas row #${id}.` });
+  try {
+    res.json(await deleteAtlasIfOrphaned({ atlasId: id, user: req.user.username }));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
 });
 
 // PATCH /api/atlas/:id  { changes: { field: value, ... } }

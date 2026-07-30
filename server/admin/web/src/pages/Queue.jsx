@@ -70,9 +70,17 @@ function ManualMapById({ lcId, onSelect, selected }) {
             <span className="k">id_name</span><span className="mono">{found.id_name}</span>
           </div>
           {found._has_lc ? (
-            <p className="hint" style={{ color: 'var(--danger, #f88)', margin: '6px 0 0' }}>
-              This game already has a LewdCorner mapping. lewdcorner.atlas_id is
-              unique, so linking here will fail — resolve that mapping first.
+            // Not an error. Migration 002 dropped the UNIQUE on
+            // lewdcorner.atlas_id precisely so one game can own several LC
+            // threads, so this link succeeds -- it used to say "linking here
+            // will fail", which sent reviewers off to "resolve" a mapping that
+            // did not need resolving. It is still worth a look: a second LC
+            // thread for one game is usually right (a remake, a split
+            // re-upload) but sometimes means the candidate is the wrong game.
+            <p className="hint" style={{ color: 'var(--amber)', margin: '6px 0 0' }}>
+              This game already has a LewdCorner mapping ({found._lc_ids?.join(', ') || 'see sources above'}).
+              Linking is allowed — one game may own several threads — but check
+              this is the same game and not a different one with a similar name.
             </p>
           ) : (
             <p className="hint" style={{ margin: '6px 0 0' }}>

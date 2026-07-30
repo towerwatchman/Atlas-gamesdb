@@ -52,15 +52,19 @@ router.get('/atlas-lookup/:atlasId', async (req, res) => {
   const owners = await getSourceOwners(id);
   const sources = await getSourceIds(id);
   const links = await getSourceLinks(id);
-  // An atlas row that already owns a LewdCorner mapping cannot take another:
-  // lewdcorner.atlas_id is UNIQUE, so the insert would fail. Flag it up front
-  // rather than letting the link attempt blow up.
+  // `_has_lc` is ADVISORY, not a blocker. Migration 002 dropped the UNIQUE on
+  // lewdcorner.atlas_id, so a game may legitimately own several LC threads and
+  // the link below will succeed. It is surfaced only so the reviewer can sanity
+  // -check that this really is the same game before adding a second thread to
+  // it. (This used to be documented as a hard failure, which it no longer is.)
+  const lcIds = links.filter((l) => l.source === 'lewdcorner').map((l) => l.id);
   res.json({
     ...row,
     _owners: owners,
     _sources: sources,
     _links: links,
     _has_lc: owners.includes('lewdcorner'),
+    _lc_ids: lcIds,
   });
 });
 

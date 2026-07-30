@@ -21,5 +21,8 @@
     "test:locks": "node tests/locks.test.mjs",
     "test:session": "node tests/session.test.mjs",
     "test:releases": "node tests/releases.test.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0"
   }
 }

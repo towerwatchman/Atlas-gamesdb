@@ -84,17 +84,46 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Something went wrong on the server.' });
 });
 
-app.listen(env.PORT, () => {
+// Flipped to true once we are actually accepting connections. Until then any
+// exception is a STARTUP failure and must be fatal -- see the handler below.
+let listening = false;
+
+const server = app.listen(env.PORT, () => {
+  listening = true;
   console.log(`Atlas server listening on http://localhost:${env.PORT}`);
   // Printed so a stale SESSION_HOURS in .env is obvious in the pm2 logs
   // rather than only showing up as "I have to log in again".
   console.log(`Sessions last ${sessionSummary()}`);
 });
 
-// Final safety net: a stray rejection anywhere should be logged, never fatal.
+// A bind failure is fatal. It used to be caught by the uncaughtException handler
+// below, which logged "kept alive" and left a process that pm2 considered
+// healthy, that served nothing, and that would never be restarted. Exiting
+// non-zero lets the supervisor do its job.
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`Port ${env.PORT} is already in use. Another instance is `
+      + 'probably still running (`pm2 list`). Not starting.');
+  } else {
+    console.error('Server failed to start:', err);
+  }
+  process.exit(1);
+});
+
+// Final safety net: once we are serving, a stray rejection in one request should
+// not take down every other in-flight request. Before that point there is no
+// request to protect, so staying up would only hide a broken boot.
 process.on('unhandledRejection', (err) => {
+  if (!listening) {
+    console.error('Unhandled rejection during startup — exiting:', err);
+    process.exit(1);
+  }
   console.error('Unhandled rejection (kept alive):', err);
 });
 process.on('uncaughtException', (err) => {
+  if (!listening) {
+    console.error('Uncaught exception during startup — exiting:', err);
+    process.exit(1);
+  }
   console.error('Uncaught exception (kept alive):', err);
 });
