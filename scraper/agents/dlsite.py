@@ -124,17 +124,17 @@ class dlsite:
                     tmp["url"] = cells[2].find("a", href=True)["href"]
                     tmp["img"] = cells[2].find("img")["src"]
                     # print(tmp["circle_id"])
-                    # print(
-                    #    "ID: "
-                    #    + str(tmp["id"])
-                    #    + " | Circle: "
-                    #    + str(tmp["name"])
-                    #    + " | url: "
-                    #    + str(tmp["url"])
-                    #    + " | img: "
-                    #    + str(tmp["img"])
-                    # )
-                    UpdatetableDynamic("dlsite_circle", tmp, db_type)
+                    print(
+                        "ID: "
+                        + str(tmp["id"])
+                        + " | Circle: "
+                        + str(tmp["name"])
+                        + " | url: "
+                        + str(tmp["url"])
+                        + " | img: "
+                        + str(tmp["img"])
+                     )
+                    #UpdatetableDynamic("dlsite_circle", tmp, db_type)
                 print(item_type + " Circle ID's Updated for " + circle)
             else:
                 print("ERROR! Unable to update for: " + circle)

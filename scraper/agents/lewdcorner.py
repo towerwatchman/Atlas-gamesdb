@@ -72,7 +72,7 @@ from scraper.agents.lc_detail import parse_lc_thread
 from scraper.utils.db import (
     UpdatetableDynamic, getAtlasIdByLcId, findIdByTitle,
     insertAtlas, updateAtlasById, atlasOwnedByOtherSource,
-    getLcThreadUpdatesBulk, getLcThreadUpdated,
+    getLcThreadUpdatesBulk, getLcThreadUpdated, getLcSiteUrl,
     findAtlasIdsByIdName, findFuzzyAtlasCandidates,
     getAtlasRowsByIds, enqueueLcReview, isLcInReviewQueue,
     touchAtlasRecord,
@@ -521,6 +521,68 @@ class lewdcorner:
         UpdatetableDynamic("lewdcorner", self._clean(lc), db_type)
         print("  added lc_id", lc_id, "-> atlas_id", new_atlas_id, atlas["title"])
         return "added"
+
+    # ---- single-game refresh (manual rescan / queue worker) ----------------
+    def refresh_one(self, lc_id, db_type):
+        """Full re-scrape of a SINGLE, ALREADY-MAPPED LewdCorner thread: fetch
+        the thread page fresh and rewrite the fields it carries. Shared with
+        f95.refresh_one by the queue worker (atlas-worker), which dispatches to
+        whichever agent matches the queue row's `source`.
+
+        Deliberately narrower than f95.refresh_one: F95 can safely find-or-
+        create because an f95_id maps 1:1 to a thread with no ambiguity. An LC
+        thread with no atlas mapping yet has to go through the SAME
+        exact/fuzzy/multi matching that run() uses (see _process_item) --
+        skipping that here to blind-insert a row would bypass the one thing
+        that keeps duplicate atlas rows from being created. So: no existing
+        mapping -> refuse and say so, rather than silently doing the wrong
+        thing. (If a queued lc_id genuinely isn't mapped yet, that's what the
+        review queue is for.)
+
+        Returns True on a successful fetch + write, False otherwise (including
+        the "not yet mapped" case -- the worker records that as an error either
+        way, but the message differs).
+        """
+        lc_id = str(lc_id)
+        atlas_id = getAtlasIdByLcId(lc_id, db_type)
+        if not atlas_id:
+            print(f"  lc {lc_id}: no existing atlas mapping; refusing to "
+                  f"guess. Resolve it via the review queue first, then refresh.")
+            return False
+
+        site_url = getLcSiteUrl(lc_id, db_type)
+        if not site_url:
+            print(f"  lc {lc_id}: mapped to atlas_id {atlas_id} but has no "
+                  f"stored site_url; nothing to fetch.")
+            return False
+
+        atlas = gameRecord.atlasRecord()
+        lc = gameRecord.lcRecord()
+        lc["lc_id"] = lc_id
+        lc["atlas_id"] = atlas_id
+        lc["site_url"] = site_url
+
+        print("refresh:", lc_id, site_url)
+        detail = self._fetch_detail(lc_id, site_url)
+        if not detail:
+            print(f"  refresh failed (detail fetch); leaving existing row "
+                  f"untouched: {lc_id}")
+            return False
+
+        now = int(time.time())
+        self._apply_detail(atlas, lc, detail)
+        lc["last_record_update"] = now
+
+        # Mirror _process_item's already-mapped branch: never let a manual
+        # refresh overwrite atlas fields another source owns.
+        if not atlasOwnedByOtherSource(atlas_id, db_type):
+            atlas["last_record_update"] = now
+            updateAtlasById(atlas_id, self._clean(atlas), db_type)
+        else:
+            touchAtlasRecord(atlas_id, db_type, now)
+        UpdatetableDynamic("lewdcorner", self._clean(lc), db_type)
+        print("  refreshed lc_id", lc_id)
+        return True
 
     # ---- thread-page detail --------------------------------------------
     # The API listing carries ids, prefixes, counts and THUMBNAILS. Everything

@@ -8,27 +8,61 @@ consumer that actually does the work. It runs under PM2 as `atlas-worker`.
 If the worker isn't running, the queue silently fills up and nothing refreshes.
 The page will happily keep accepting requests.
 
-## Scope: F95 threads only
+# The Atlas worker
 
-The process name is deliberately generic, because this is the intended home for
-any future on-demand refresh work. **Today it handles F95 only.** The whole path
-is F95-specific:
+The admin portal's **Refresh queue** page (and the "Queue refresh" button on a
+game's Mapped sources panel) let an admin ask for a game to be re-scraped.
+Pressing that button does not scrape anything — it inserts a row into
+`f95_refresh_queue` with `status='pending'`. `f95_refresh_worker.py` is the
+consumer that actually does the work. It runs under PM2 as `atlas-worker`.
 
-- `enqueue()` in `lib/f95Refresh.js` rejects any non-numeric id and stores it as
-  `f95_id`
-- the queue table is `f95_refresh_queue`, keyed on `f95_id`
-- the worker calls `refresh_one()` on `scraper.agents.f95`
+If the worker isn't running, the queue silently fills up and nothing refreshes.
+The page will happily keep accepting requests.
 
-So a game with **no F95 thread** — LewdCorner-only, DLsite-only, SxS-only, or an
-atlas row created by hand in the admin tool — cannot be queued at all. There is no
-`atlas_id` entry point and no LC/DLsite/SxS equivalent. In practice that covers
-most of the library, since `f95_zone` is the dominant source, but it is not "any
-game".
+## Scope: F95 and LewdCorner. Anything past that needs a new agent branch.
 
-Adding another source later means a second queue table (or an added `source`
-column on this one), a matching enqueue path in the admin server, and a branch in
-`_process_one` to pick the right agent. The process name won't need to change
-again when that happens.
+**Originally F95-only**; LewdCorner refresh was added by generalizing the
+existing table rather than standing up a second queue (migration 009).
+
+- The queue table is still `f95_refresh_queue`, and its numeric-id column is
+  still named `f95_id` — neither was renamed, since doing so touches every
+  Python/Node file that reads them, for a purely cosmetic win. A `source`
+  column (`'f95'` or `'lc'`) now distinguishes which agent a row belongs to;
+  for a `source='lc'` row, the `f95_id` column holds an `lc_id`.
+- `enqueue()` in `lib/f95Refresh.js` and `enqueueRefresh()` in
+  `scraper/utils/db.py` both scope their "already queued" dedup check by
+  `(source, id)` together — an `lc_id` that happens to numerically match a
+  pending `f95_id` must not be treated as the same request.
+- The worker (`_process_one` in `f95_refresh_worker.py`) reads `source` off the
+  claimed row and dispatches to `f95.refresh_one()` or `lewdcorner.refresh_one()`
+  accordingly. Each agent gets its own session (F95Session / LCSession), built
+  once at startup in `_build_agents()`.
+- **LewdCorner's `refresh_one` is deliberately narrower than F95's.** F95 can
+  safely find-or-create a game for an unseen `f95_id`, because the thread id
+  maps 1:1 with no ambiguity. An unmapped `lc_id` can't take that shortcut —
+  it needs the same exact/fuzzy/multi matching the review queue exists for.
+  So `lewdcorner.refresh_one()` refuses (cleanly, logging why) if the `lc_id`
+  isn't already linked to an atlas row, rather than guessing. Queue an unmapped
+  LC thread through the review queue first, then refresh it.
+- The **F95 quick-add box** on the Refresh queue page stays F95-only on
+  purpose: an LC thread's real URL needs a title slug the queue never stores
+  (`.../threads/eternum.555/`, not just `555`), so there's no safe way to turn
+  a bare `lc_id` into a link there. Queue an LC refresh from the game's Mapped
+  sources panel instead, where the real `site_url` is already known. The page
+  does still *list and filter* LC rows (`?source=lc`) so an admin can see
+  what's in flight regardless of where it was queued from.
+
+So a game with **no F95 thread and no LewdCorner thread** — DLsite-only,
+SxS-only, or an atlas row created by hand — still cannot be queued for
+refresh. There's no `dlsite`/`sxs` agent branch yet.
+
+Adding a third source means: give it a `refresh_one(id, db_type)` method on its
+agent (mirroring `lewdcorner.refresh_one` — decide up front whether it can
+safely find-or-create, like F95, or needs to refuse an unmapped id, like LC),
+add it to `_build_agents()` in the worker, add it to `REFRESH_SOURCES` in
+`lib/f95Refresh.js`, and decide whether it gets its own quick-add box or relies
+on SourcePanel like LC does. The process name won't need to change.
+
 
 ## How it's run
 
@@ -100,14 +134,14 @@ Healthy startup looks like this:
 ```
 Running -> MySQL @ <host>
   env: <env status>
-F95 refresh worker started (mode=daemon, interval=10s/job)
+Refresh worker started (mode=daemon, interval=10s/job, sources=f95, lc)
 ```
 
 and then, per job:
 
 ```
--> processing queue_id=41 f95_id=93340 (requested_by=braden, attempt 1)
-   done queue_id=41 f95_id=93340
+-> processing queue_id=41 source=f95 id=93340 (requested_by=braden, attempt 1)
+   done queue_id=41 source=f95 id=93340
 ```
 
 ### Tuning
@@ -144,6 +178,20 @@ The `python` deploy target has an empty `post_commands`. Add the restart:
 Until that's in place, treat `pm2 restart atlas-worker` as a manual step after
 any deploy that touches `scraper/**` or `f95_refresh_worker.py`.
 
+## LewdCorner support needs migration 009
+
+If this deploy is updating an existing install rather than starting fresh, run
+the migration that adds the `source` column before restarting the worker —
+without it, every write to `f95_refresh_queue` (Node's enqueue, the worker's
+claim/result updates) will fail with `Unknown column 'source'`:
+
+```bash
+mysql -u root -p games < server/admin/sql/009_refresh_queue_source.sql
+```
+
+It's idempotent, like 001–008 — safe to run again if unsure whether it already
+applied. A fresh install via `scraper.tables.base` already includes the column.
+
 ## Files it needs on the host
 
 Both resolve against the repo root (`config.app_root()`, derived from
@@ -157,37 +205,50 @@ Both resolve against the repo root (`config.app_root()`, derived from
 
 ## Verifying end to end
 
-Queue something and watch it move:
+Queue something and watch it move — an F95 thread:
 
 ```bash
 mysql -u root -p games -e \
-  "INSERT INTO f95_refresh_queue (f95_id, status, priority, requested_by, requested_at)
-   VALUES ('93340','pending',100,'manual-test',UNIX_TIMESTAMP());"
+  "INSERT INTO f95_refresh_queue (f95_id, source, status, priority, requested_by, requested_at)
+   VALUES ('93340','f95','pending',100,'manual-test',UNIX_TIMESTAMP());"
+```
 
+...or a LewdCorner thread that's already mapped to an atlas row (an unmapped
+`lc_id` will correctly be refused — see the scope section above):
+
+```bash
 mysql -u root -p games -e \
-  "SELECT queue_id, f95_id, status, attempts, started_at, finished_at, last_error
+  "INSERT INTO f95_refresh_queue (f95_id, source, status, priority, requested_by, requested_at)
+   VALUES ('555','lc','pending',100,'manual-test',UNIX_TIMESTAMP());"
+```
+
+```bash
+mysql -u root -p games -e \
+  "SELECT queue_id, f95_id, source, status, attempts, started_at, finished_at, last_error
      FROM f95_refresh_queue ORDER BY queue_id DESC LIMIT 5;"
 ```
 
-`pending` → `processing` → `done` within ~10 seconds. The F95 refresh page's
-summary cards read the same table, so it should show there too.
+`pending` → `processing` → `done` within ~10 seconds. The Refresh queue page's
+summary cards read the same table, so it should show there too (filter by
+source if it's not obvious which row is which).
 
 ## Known gap: rows stuck in `processing`
 
-`getNextPendingF95Refresh` only selects `status='pending'`. Nothing reclaims a
-row left in `processing`, so if the worker dies mid-job — a deploy, an OOM, a
-`pm2 restart` at the wrong moment — that row is stranded and will never be
-retried.
+`getNextPendingRefresh` only selects `status='pending'` (regardless of
+source). Nothing reclaims a row left in `processing`, so if the worker dies
+mid-job — a deploy, an OOM, a `pm2 restart` at the wrong moment — that row is
+stranded and will never be retried.
 
-It's recoverable by hand: the **Retry** button on the F95 refresh page resets the
-row to `pending`. To find strays:
+It's recoverable by hand: the **Retry** button on the Refresh queue page resets
+the row to `pending`. To find strays:
 
 ```sql
-SELECT queue_id, f95_id, attempts, FROM_UNIXTIME(started_at) AS started
+SELECT queue_id, f95_id, source, attempts, FROM_UNIXTIME(started_at) AS started
   FROM f95_refresh_queue
  WHERE status = 'processing'
    AND started_at < UNIX_TIMESTAMP() - 900;
 ```
+
 
 There is also no attempts cap, so a permanently broken thread can be retried
 forever. Both are worth fixing properly (a stale-claim sweep at worker startup

@@ -119,9 +119,11 @@ When the scrape finishes it builds the downloadable package (`base`/`daily`
 
 `f95_refresh_worker.py` is a separate long-running process, not part of an
 `api.py` run. It consumes `f95_refresh_queue` — the table the admin portal's
-**F95 refresh** page writes to — and re-scrapes one game every 10 seconds. On the
-server it runs under PM2 as `atlas-worker`; if it isn't running, that page
-accepts requests that never get processed.
+**Refresh queue** page (and a game's Mapped sources panel) write to — and
+re-scrapes one item every 10 seconds from whichever source that row is for
+(F95zone or LewdCorner). On the server it runs under PM2 as `atlas-worker`; if
+it isn't running, the admin portal accepts refresh requests that never get
+processed.
 
 ```bash
 python f95_refresh_worker.py           # daemon (how it runs in production)

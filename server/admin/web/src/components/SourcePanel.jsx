@@ -1,6 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { fmtTime } from '../lib/api.js';
+import { api, fmtTime } from '../lib/api.js';
 import Favicon from './Favicon.jsx';
+
+// Which source tables the refresh queue's worker (atlas-worker) can actually
+// handle, and the `source` key + id column it expects. dlsite/sxs have no
+// agent.refresh_one yet, so they're deliberately absent here -- the button
+// just doesn't appear for those tabs rather than queueing something the
+// worker would reject.
+const REFRESHABLE = {
+  f95_zone: { source: 'f95', idCol: 'f95_id' },
+  lewdcorner: { source: 'lc', idCol: 'lc_id' },
+};
 
 // Fields that are epoch seconds and should render as dates.
 const TIME_FIELDS = new Set([
@@ -47,6 +57,9 @@ function Value({ field, value }) {
 export default function SourcePanel({ detail }) {
   const list = detail || [];
   const [active, setActive] = useState(0);
+  // Per-source refresh state, keyed by `${source}:${id}` so switching tabs
+  // doesn't show a stale "queued" message from a different source.
+  const [refreshState, setRefreshState] = useState({});
 
   // Keep the selection valid if the game's mappings change under us.
   useEffect(() => {
@@ -68,6 +81,25 @@ export default function SourcePanel({ detail }) {
   }
 
   const current = list[Math.min(active, list.length - 1)];
+  const refreshable = REFRESHABLE[current.source];
+  const refreshKey = refreshable ? `${refreshable.source}:${current.id}` : null;
+  const rstate = refreshKey ? refreshState[refreshKey] : null;
+
+  async function queueRefresh() {
+    if (!refreshable || !current.id) return;
+    setRefreshState((s) => ({ ...s, [refreshKey]: { busy: true } }));
+    try {
+      const res = await api.post('/api/f95-refresh', {
+        f95Id: current.id, source: refreshable.source,
+      });
+      setRefreshState((s) => ({
+        ...s,
+        [refreshKey]: { busy: false, queued: true, reused: !!res.reused },
+      }));
+    } catch (e) {
+      setRefreshState((s) => ({ ...s, [refreshKey]: { busy: false, error: e.message } }));
+    }
+  }
 
   return (
     <div className="source-panel">
@@ -94,7 +126,7 @@ export default function SourcePanel({ detail }) {
         </div>
       )}
 
-      <div className="row" style={{ gap: 8, alignItems: 'center', marginBottom: 8 }}>
+      <div className="row" style={{ gap: 8, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
         <Favicon link={{ url: current.site_url }} size={16} />
         <strong>{current.source_label}</strong>
         <span className="mono hint">{current.id_col} {current.id}</span>
@@ -103,7 +135,30 @@ export default function SourcePanel({ detail }) {
             open thread ↗
           </a>
         )}
+        {refreshable && (
+          <button
+            className="btn btn-sm"
+            style={{ marginLeft: 'auto' }}
+            onClick={queueRefresh}
+            disabled={rstate?.busy}
+            title="Queue a re-scrape of this thread with the refresh worker"
+          >
+            {rstate?.busy ? 'Queueing…' : 'Queue refresh'}
+          </button>
+        )}
       </div>
+      {rstate?.queued && (
+        <p className="hint" style={{ margin: '0 0 8px' }}>
+          {rstate.reused
+            ? 'Already queued — a refresh for this is pending or in progress.'
+            : 'Queued. The worker refreshes one item roughly every 10 seconds; see the F95 refresh page for status.'}
+        </p>
+      )}
+      {rstate?.error && (
+        <p className="hint" style={{ margin: '0 0 8px', color: 'var(--danger, #f88)' }}>
+          {rstate.error}
+        </p>
+      )}
 
       <div className="table-wrap">
         <table>

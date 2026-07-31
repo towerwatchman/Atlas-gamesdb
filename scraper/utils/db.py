@@ -391,6 +391,17 @@ def atlasOwnedByOtherSource(atlas_id, db_type=None):
     return False
 
 
+def getLcSiteUrl(lc_id, db_type=None):
+    """The stored thread URL for this lc_id, or None if unseen. Needed by a
+    single-thread refresh (queue worker / manual rescan), which has only an
+    lc_id to work from -- no fresh listing-feed item carrying a `link`."""
+    row = _run(
+        "SELECT site_url FROM lewdcorner WHERE lc_id = %s LIMIT 1",
+        (lc_id,), fetch="one",
+    )
+    return row[0] if row and row[0] else None
+
+
 def getAtlasIdByLcId(lc_id, db_type=None):
     """Return the atlas_id already linked to this LewdCorner thread, or 0 if
     unseen. The LewdCorner thread id (lc_id) is stable, so this is the
@@ -714,20 +725,33 @@ def getF95IdsMissingTags(db_type=None):
     return [r[0] for r in rows]
 
 
-# -------------------------------------------------- f95 refresh queue (req #4)
+# -------------------------------------------------- refresh queue (req #4)
 #
-# A tiny work queue the Node admin server writes into (enqueue an f95_id to
-# be re-scraped) and the Python cron worker (f95_refresh_worker.py) drains,
-# one item every ~10s. Status lifecycle:
+# A tiny work queue the Node admin server writes into (enqueue an item to be
+# re-scraped) and the Python worker (atlas-worker / f95_refresh_worker.py)
+# drains, one item every ~10s. Status lifecycle:
 #   pending -> processing -> done | error
 # The worker claims exactly one pending row at a time (oldest first),
-# refreshes that game via f95.refresh_one, then marks it done/error. Kept
-# deliberately simple: one worker, so no locking beyond the status flip.
+# dispatches it to the right agent by `source`, then marks it done/error.
+# Kept deliberately simple: one worker, so no locking beyond the status flip.
+#
+# Originally F95-only (hence the table/column names and the F95-suffixed
+# function names below, kept for compatibility). `source` distinguishes which
+# agent a row belongs to: 'f95' -> f95.refresh_one, 'lc' -> lewdcorner.refresh_one.
+# getNextPendingRefresh / markRefreshProcessing / markRefreshResult never
+# actually depended on the source (SELECT * / UPDATE by queue_id), so those
+# three are plain renames with the old name kept as an alias. enqueue is the
+# one that DOES need to change: the "is this already queued" dedup check has
+# to be scoped by (source, id) together, not just id, or a numeric lc_id that
+# happens to equal a pending f95_id would be reported as already-queued
+# against the wrong source.
 
-def getNextPendingF95Refresh(db_type=None):
+def getNextPendingRefresh(db_type=None):
     """Return the oldest still-pending refresh queue row as a dict, or None.
     'Oldest' = lowest priority number first, then earliest requested_at, so
-    a caller can bump urgent items by giving them a lower priority."""
+    a caller can bump urgent items by giving them a lower priority. Rows from
+    every source are eligible; the caller (the worker) reads row['source'] to
+    decide which agent handles it."""
     return _run(
         """
         SELECT * FROM f95_refresh_queue
@@ -739,12 +763,12 @@ def getNextPendingF95Refresh(db_type=None):
     )
 
 
-def markF95RefreshProcessing(queue_id, db_type=None):
+def markRefreshProcessing(queue_id, db_type=None):
     """Flip a claimed row pending -> processing, stamping started_at. Returns
     True if this call was the one that claimed it (affected a row), so even
     if two workers ever raced, only one proceeds."""
     now = int(time.time())
-    res = _run(
+    _run(
         """
         UPDATE f95_refresh_queue
         SET status = 'processing', started_at = %s, attempts = attempts + 1
@@ -760,7 +784,7 @@ def markF95RefreshProcessing(queue_id, db_type=None):
     return bool(row and row[0] == "processing")
 
 
-def markF95RefreshResult(queue_id, ok, error=None, db_type=None):
+def markRefreshResult(queue_id, ok, error=None, db_type=None):
     """Mark a processed row done (ok=True) or error (ok=False, with an
     optional message), stamping finished_at."""
     now = int(time.time())
@@ -776,18 +800,19 @@ def markF95RefreshResult(queue_id, ok, error=None, db_type=None):
     )
 
 
-def enqueueF95Refresh(f95_id, requested_by="python", priority=100,
-                      db_type=None):
-    """Insert a pending refresh request for an f95_id (used by CLI helpers;
-    the Node server has its own insert). If an unfinished request for the
-    same f95_id already exists, this leaves it alone and returns its id."""
+def enqueueRefresh(source, item_id, requested_by="python", priority=100,
+                    db_type=None):
+    """Insert a pending refresh request for `item_id` under `source` ('f95' or
+    'lc'). If an unfinished request for the same (source, item_id) already
+    exists, this leaves it alone and returns its id -- scoped by source so an
+    lc_id and an f95_id that happen to share a numeric value can't collide."""
     existing = _run(
         """
         SELECT queue_id FROM f95_refresh_queue
-        WHERE f95_id = %s AND status IN ('pending', 'processing')
+        WHERE source = %s AND f95_id = %s AND status IN ('pending', 'processing')
         ORDER BY queue_id LIMIT 1
         """,
-        (str(f95_id),), fetch="one",
+        (source, str(item_id)), fetch="one",
     )
     if existing:
         return existing[0]
@@ -795,11 +820,35 @@ def enqueueF95Refresh(f95_id, requested_by="python", priority=100,
     return _run(
         """
         INSERT INTO f95_refresh_queue
-            (f95_id, status, priority, requested_by, requested_at, attempts)
-        VALUES (%s, 'pending', %s, %s, %s, 0)
+            (f95_id, source, status, priority, requested_by, requested_at, attempts)
+        VALUES (%s, %s, 'pending', %s, %s, %s, 0)
         """,
-        (str(f95_id), int(priority), requested_by, now), commit=True,
+        (str(item_id), source, int(priority), requested_by, now), commit=True,
     )
+
+
+def enqueueF95Refresh(f95_id, requested_by="python", priority=100,
+                      db_type=None):
+    """Insert a pending F95 refresh request (used by CLI helpers; the Node
+    server has its own insert). Thin wrapper over enqueueRefresh -- kept under
+    its original name since tools/maintenance/repair_external_ids.py and its
+    test already call it by this name."""
+    return enqueueRefresh("f95", f95_id, requested_by, priority, db_type)
+
+
+def enqueueLcRefresh(lc_id, requested_by="python", priority=100, db_type=None):
+    """Insert a pending LewdCorner refresh request. Symmetry with
+    enqueueF95Refresh, for CLI helpers / future admin-server use."""
+    return enqueueRefresh("lc", lc_id, requested_by, priority, db_type)
+
+
+# Old names, kept as aliases: these three never depended on 'f95' specifically,
+# they just predate a second source existing. f95_refresh_worker.py has been
+# updated to call the new names directly; anything else still using these
+# keeps working unchanged.
+getNextPendingF95Refresh = getNextPendingRefresh
+markF95RefreshProcessing = markRefreshProcessing
+markF95RefreshResult = markRefreshResult
 
 
 def findDlsiteMaker(table, circle_id, db_type=None):

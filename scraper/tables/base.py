@@ -70,15 +70,22 @@ class query:
         return query
 
     def createF95RefreshQueueTable(type=None):
-        # Server-side work queue: the Node admin server enqueues an f95_id to
-        # be re-scraped; the Python cron worker drains it one item / ~10s.
-        # No FK to f95_zone -- a refresh can legitimately be queued for a
-        # thread id that isn't in the DB yet (e.g. a brand-new game an admin
+        # Server-side work queue: the Node admin server enqueues an id to be
+        # re-scraped; the Python worker (atlas-worker / f95_refresh_worker.py)
+        # drains it one item / ~10s. `source` distinguishes which agent should
+        # handle the row ('f95' -> f95.refresh_one, 'lc' -> lewdcorner.refresh_one,
+        # more as they're added) -- see docs/ATLAS_WORKER.md. The `f95_id`
+        # column keeps its historical name but holds any source's id generically
+        # (an lc_id, for a source='lc' row); see migration 009 for why it wasn't
+        # renamed.
+        # No FK to f95_zone/lewdcorner -- a refresh can legitimately be queued
+        # for an id that isn't in the DB yet (e.g. a brand-new game an admin
         # spotted). Status: pending -> processing -> done | error.
         query = """
                 CREATE TABLE IF NOT EXISTS f95_refresh_queue (
                     queue_id BIGINT NOT NULL PRIMARY KEY AUTO_INCREMENT,
                     f95_id VARCHAR(32) NOT NULL,
+                    source VARCHAR(16) NOT NULL DEFAULT 'f95',
                     status VARCHAR(16) NOT NULL DEFAULT 'pending',
                     priority INT NOT NULL DEFAULT 100,
                     requested_by VARCHAR(64),
@@ -88,7 +95,8 @@ class query:
                     attempts INT NOT NULL DEFAULT 0,
                     last_error TEXT,
                     INDEX idx_f95_refresh_status (status, priority, requested_at),
-                    INDEX idx_f95_refresh_f95id (f95_id)
+                    INDEX idx_f95_refresh_f95id (f95_id),
+                    INDEX idx_f95_refresh_source_id (source, f95_id)
                 );
             """
         return query
