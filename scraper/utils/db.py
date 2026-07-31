@@ -44,11 +44,29 @@ def _check_table(table):
 
 
 def _new_connection():
+    # autocommit=True is load-bearing, not a style choice: without it, every
+    # read-only _run() call (fetch="one"/"all", commit=False -- the default,
+    # and most call sites) leaves its transaction open indefinitely, since
+    # nothing ever commits it. That's invisible for a short-lived script like
+    # api.py, which exits and drops the connection soon after. It is NOT
+    # invisible for a long-running daemon (f95_refresh_worker.py / atlas-worker)
+    # that polls the DB every few seconds forever: the first read-only poll
+    # after startup opens a transaction that then never closes, holding a
+    # metadata lock on every table it has ever read from until the process
+    # exits or happens to run a commit=True write.
+    #
+    # Confirmed directly: with an idle worker running, `ALTER TABLE
+    # f95_refresh_queue ADD COLUMN ...` (migration 009) hung indefinitely --
+    # information_schema.INNODB_TRX showed the worker's connection sitting in
+    # a RUNNING transaction with trx_query=NULL, i.e. blocked on nothing,
+    # holding the lock the ALTER needed simply because it had never committed.
+    # Once that connection closed, the exact same ALTER completed instantly.
     return mysql.connector.connect(
         user=config.db_user(),
         password=config.db_password(),
         host=config.host(),
         database=config.database(),
+        autocommit=True,
     )
 
 
