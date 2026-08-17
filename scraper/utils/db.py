@@ -1061,6 +1061,40 @@ _STORE_OUTPUT = {
     "gog": ("gog_id", "gog_ids"),
 }
 
+# DLC ids ship in a SEPARATE key per store, alongside the combined set.
+#
+# atlas_manual_links has carried entry_type ('game'/'dlc') and a parent
+# since #285/#278, and the admin UI has always let a link be typed and
+# parented -- but the export SELECT read only (atlas_id, kind, ext_id, url),
+# so every one of those distinctions was discarded on the way to the
+# client. A base game's appid and its DLC appids arrived as one flat
+# steam_appids array, indistinguishable, and the client had no way to tell
+# a game from an add-on however it queried.
+#
+# steam_appids/gog_ids keep their existing meaning -- EVERY id for this
+# game -- so a client that has never heard of these keys behaves exactly as
+# before. Narrowing them to game-only would silently change what older
+# clients match on, on a package update they did not opt into.
+_STORE_DLC_OUTPUT = {
+    "steam": "steam_dlc_appids",
+    "gog": "gog_dlc_ids",
+}
+
+# url-shaped kinds (itch, custom, anything added later) export as a list of
+# urls rather than ids, but a DLC among them is still a DLC. Keyed off the
+# kind name so a new kind gets typing for free instead of silently losing it.
+def _url_kind_dlc_key(kind):
+    return f"{kind}_dlc"
+
+# Parent linkage, exported as one entry per DLC id so the client can show an
+# add-on under the thing it belongs to. `parent` is null for an unparented
+# DLC -- the admin UI allows that state ("unparented"), so the export has to
+# represent it rather than drop the id.
+_STORE_DLC_PARENT_OUTPUT = {
+    "steam": "steam_dlc_parents",
+    "gog": "gog_dlc_parents",
+}
+
 
 def _itch_url_from_id(value):
     """An itch id may be a bare slug or already a host."""
@@ -1105,6 +1139,69 @@ def _dedupe(seq, key=None):
     return out
 
 
+def _resolve_manual_link(link):
+    """(kind, ext_id, url) for one manual link, deriving the missing half.
+
+    A link may carry an id, a url, or both. Split out of the merge loop because
+    parent resolution needs the SAME derived id: a DLC may point at a parent
+    that was itself added as a url, and comparing against the raw column would
+    miss it.
+    """
+    kind = str(link.get("kind") or "").strip().lower()
+    if not kind:
+        return None, None, None
+    ext_id = str(link.get("ext_id") or "").strip() or None
+    url = str(link.get("url") or "").strip() or None
+
+    if not ext_id and url and kind in _STORE_ID_FROM_URL:
+        found = _STORE_ID_FROM_URL[kind].search(url)
+        if found:
+            ext_id = found.group(1)
+    if not url and ext_id:
+        if kind in _STORE_URL_FROM_ID:
+            url = _STORE_URL_FROM_ID[kind](ext_id)
+        elif kind == "itch":
+            url = _itch_url_from_id(ext_id)
+    return kind, ext_id, url
+
+
+def _manual_link_parent(link, resolved_by_link_id):
+    """The thing a DLC belongs to, as `{"kind": ..., "id": ...}` or None.
+
+    Two shapes are stored (server/admin/server/src/lib/manualLinks.js):
+
+      * parent_kind='manual', parent_link_id -> another manual link on the
+        same atlas row. parent_link_id is an atlas_manual_links PRIMARY KEY,
+        which the client never receives and could not resolve, so it is
+        translated here into that parent's own (kind, ext_id) -- e.g.
+        {"kind": "steam", "id": "1000"}. Exporting the raw link_id would ship
+        a number that means nothing outside this database, and in practice
+        EVERY parented DLC uses this shape.
+      * parent_kind='f95_zone'/'lewdcorner'/'dlsite'/'sxs', parent_source_id
+        -> one of the row's source mappings, which the client already knows by
+        that id, so it passes through unchanged.
+
+    None means "no usable parent" -- either genuinely unparented (a state the
+    admin UI allows and displays), or a parent that has no resolvable id. The
+    DLC id itself is kept either way; only the linkage is lost.
+    """
+    kind = str(link.get("parent_kind") or "").strip().lower()
+    if not kind:
+        return None
+    if kind == "manual":
+        parent = resolved_by_link_id.get(link.get("parent_link_id"))
+        if not parent:
+            return None
+        parent_kind, parent_id, _ = parent
+        if not parent_kind or not parent_id:
+            return None
+        return {"kind": parent_kind, "id": parent_id}
+    source_id = str(link.get("parent_source_id") or "").strip()
+    if not source_id:
+        return None
+    return {"kind": kind, "id": source_id}
+
+
 def _merge_manual_links_into_external_ids(atlas_rows):
     """Overlay admin-approved manual links (atlas_manual_links) onto each atlas
     row's external_ids blob, at EXPORT time only -- the stored atlas.external_ids
@@ -1146,8 +1243,14 @@ def _merge_manual_links_into_external_ids(atlas_rows):
         return atlas_rows
 
     placeholders = ", ".join(["%s"] * len(atlas_ids))
+    # entry_type and the parent columns are selected because the client needs
+    # to tell a base game from a DLC; reading only (kind, ext_id, url) is what
+    # flattened them together. link_id order is kept so the scalar key stays
+    # deterministic.
     links = _run(
-        f"SELECT atlas_id, kind, ext_id, url FROM atlas_manual_links "
+        f"SELECT atlas_id, link_id, kind, ext_id, url, entry_type, parent_kind, "
+        f"       parent_link_id, parent_source_id "
+        f"FROM atlas_manual_links "
         f"WHERE atlas_id IN ({placeholders}) ORDER BY link_id",
         tuple(atlas_ids), fetch="all", dict_cursor=True,
     ) or []
@@ -1185,39 +1288,70 @@ def _merge_manual_links_into_external_ids(atlas_rows):
 
         # Group by kind, resolving each link to (id, url) with whichever half
         # can be derived from the other.
+        # Resolved up front, keyed by link_id, because a DLC's parent is stored
+        # as that parent's link_id and has to be translated into an id the
+        # client can actually match on.
+        resolved = {}
+        for link in manual:
+            resolved[link.get("link_id")] = _resolve_manual_link(link)
+
         grouped = {}
         for link in manual:
-            kind = str(link.get("kind") or "").strip().lower()
+            kind, ext_id, url = resolved.get(link.get("link_id"), (None, None, None))
             if not kind:
                 continue
-            ext_id = str(link.get("ext_id") or "").strip() or None
-            url = str(link.get("url") or "").strip() or None
-
-            if not ext_id and url and kind in _STORE_ID_FROM_URL:
-                found = _STORE_ID_FROM_URL[kind].search(url)
-                if found:
-                    ext_id = found.group(1)
-            if not url and ext_id:
-                if kind in _STORE_URL_FROM_ID:
-                    url = _STORE_URL_FROM_ID[kind](ext_id)
-                elif kind == "itch":
-                    url = _itch_url_from_id(ext_id)
-
             if not ext_id and not url:
                 continue
-            grouped.setdefault(kind, []).append({"id": ext_id, "url": url})
+            grouped.setdefault(kind, []).append({
+                "id": ext_id,
+                "url": url,
+                # Anything not explicitly 'dlc' is a game. entry_type is NOT
+                # NULL DEFAULT 'game', but old rows and non-store kinds are
+                # treated the same way rather than trusted blindly.
+                "is_dlc": str(link.get("entry_type") or "").strip().lower() == "dlc",
+                "parent": _manual_link_parent(link, resolved),
+            })
 
         for kind, entries in grouped.items():
             if kind in _STORE_OUTPUT:
                 scalar_key, list_key = _STORE_OUTPUT[kind]
                 scraped = [ext.get(k) for k in _SCRAPED_ID_KEYS.get(kind, ())]
+                # Captured BEFORE ext[list_key] is overwritten below --
+                # reading it afterwards feeds the just-merged set (DLCs
+                # included) back into the game-only list.
+                previous = list(ext.get(list_key) or [])
                 # Manual first: an admin id is an override of the scraped one.
                 ids = _dedupe([e["id"] for e in entries if e["id"]]
-                              + list(ext.get(list_key) or [])
+                              + previous
                               + scraped)
                 if ids:
                     ext[list_key] = ids
-                    ext[scalar_key] = ids[0]
+                    # The scalar is the primary store entry, so prefer a
+                    # game-typed id. Previously it was just ids[0], which on a
+                    # game whose first manual link happened to be a DLC made
+                    # the DLC the headline appid. Untyped ids (scraped, or
+                    # carried over from a previous export) count as games:
+                    # only a manual link can assert "dlc".
+                    game_ids = _dedupe(
+                        [e["id"] for e in entries if e["id"] and not e["is_dlc"]]
+                        + previous
+                        + scraped)
+                    ext[scalar_key] = game_ids[0] if game_ids else ids[0]
+
+                    # Only the manual links carry a type; a scraped id has no
+                    # entry_type and is therefore never a DLC here.
+                    dlc_ids = _dedupe(
+                        [e["id"] for e in entries if e["id"] and e["is_dlc"]])
+                    dlc_key = _STORE_DLC_OUTPUT.get(kind)
+                    if dlc_ids and dlc_key:
+                        ext[dlc_key] = dlc_ids
+                        parents = {
+                            e["id"]: e["parent"]
+                            for e in entries if e["id"] and e["is_dlc"]
+                        }
+                        parent_key = _STORE_DLC_PARENT_OUTPUT.get(kind)
+                        if parent_key:
+                            ext[parent_key] = {i: parents.get(i) for i in dlc_ids}
                 # A store link with no resolvable id (an unusual url shape) is
                 # still worth shipping as a url rather than being discarded.
                 urls_only = [e["url"] for e in entries if e["url"] and not e["id"]]
@@ -1234,6 +1368,19 @@ def _merge_manual_links_into_external_ids(atlas_rows):
                 key=_norm_url)
             if merged:
                 ext[kind] = merged
+            # Typed the same way the store kinds are, so an itch DLC is not
+            # silently flattened into the main list the way it used to be.
+            dlc_urls = _dedupe(
+                [e["url"] for e in entries if e["url"] and e["is_dlc"]],
+                key=_norm_url)
+            if dlc_urls:
+                ext[_url_kind_dlc_key(kind)] = dlc_urls
+                parents = {
+                    e["url"]: e["parent"]
+                    for e in entries if e["url"] and e["is_dlc"]
+                }
+                ext[f"{kind}_dlc_parents"] = {
+                    u: parents.get(u) for u in dlc_urls}
 
         row["external_ids"] = json.dumps(ext, ensure_ascii=False)
 

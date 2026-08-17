@@ -89,13 +89,28 @@ def main():
         return atlas_id
 
     def add_link(atlas_id, kind, ext_id=None, url=None, label="t",
-                 entry_type="game"):
+                 entry_type="game", parent_kind=None, parent_link_id=None,
+                 parent_source_id=None):
         _run(
             """INSERT INTO atlas_manual_links
                  (atlas_id, kind, label, ext_id, url, entry_type,
+                  parent_kind, parent_link_id, parent_source_id,
                   added_by, added_at)
-               VALUES (%s, %s, %s, %s, %s, %s, 'test', 1)""",
-            (atlas_id, kind, label, ext_id, url, entry_type), commit=True)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'test', 1)""",
+            (atlas_id, kind, label, ext_id, url, entry_type,
+             parent_kind, parent_link_id, parent_source_id), commit=True)
+
+    def link_id_of(atlas_id, ext_id):
+        """ext_id=None finds the row added without one (a url-only link)."""
+        if ext_id is None:
+            row = _run("SELECT link_id FROM atlas_manual_links "
+                       "WHERE atlas_id = %s AND ext_id IS NULL "
+                       "ORDER BY link_id LIMIT 1", (atlas_id,), fetch="one")
+        else:
+            row = _run("SELECT link_id FROM atlas_manual_links "
+                       "WHERE atlas_id = %s AND ext_id = %s",
+                       (atlas_id, ext_id), fetch="one")
+        return row[0] if row else None
 
     def ext_for(atlas_id, start_time=0):
         for row in downloadAtlasBase(None, start_time):
@@ -166,6 +181,173 @@ def main():
         ext = ext_for(aid)
         assert_eq(ext.get("steam_appids"), ["201", "202", "203", "100"], "all kept")
         assert_eq(ext.get("steam_appid"), "201", "manual overrides the scalar")
+
+    # ---------------------------------------------------------------- dlc
+    # atlas_manual_links has carried entry_type and a parent since #285/#278 and
+    # the admin UI has always exposed both, but the export SELECT read only
+    # (kind, ext_id, url), so a base game and its DLC reached the client as one
+    # flat steam_appids array with nothing to tell them apart.
+    def t_dlc_ids_are_separated_from_game_ids():
+        reset()
+        aid = make_game(20)
+        add_link(aid, "steam", ext_id="3000", entry_type="game")
+        add_link(aid, "steam", ext_id="3001", entry_type="dlc")
+        add_link(aid, "steam", ext_id="3002", entry_type="dlc")
+        ext = ext_for(aid)
+        assert_eq(ext.get("steam_dlc_appids"), ["3001", "3002"], "dlc ids")
+        assert_eq(ext.get("steam_appid"), "3000", "scalar is the game")
+
+    def t_combined_array_still_holds_everything():
+        """steam_appids keeps its old meaning so existing clients are unaffected."""
+        reset()
+        aid = make_game(21)
+        add_link(aid, "steam", ext_id="3100", entry_type="game")
+        add_link(aid, "steam", ext_id="3101", entry_type="dlc")
+        assert_eq(ext_for(aid).get("steam_appids"), ["3100", "3101"], "all ids")
+
+    def t_no_dlc_key_when_nothing_is_a_dlc():
+        reset()
+        aid = make_game(22)
+        add_link(aid, "steam", ext_id="3200")
+        ext = ext_for(aid)
+        assert "steam_dlc_appids" not in ext, "absent, not an empty list"
+        assert "steam_dlc_parents" not in ext, ext
+
+    def t_scalar_prefers_a_game_over_a_dlc():
+        """A DLC added first used to become the headline appid."""
+        reset()
+        aid = make_game(23)
+        add_link(aid, "steam", ext_id="3301", entry_type="dlc")
+        add_link(aid, "steam", ext_id="3300", entry_type="game")
+        assert_eq(ext_for(aid).get("steam_appid"), "3300", "game wins the scalar")
+
+    def t_all_dlc_still_yields_a_scalar():
+        """Degenerate but real: every link typed dlc must not lose the scalar."""
+        reset()
+        aid = make_game(24)
+        add_link(aid, "steam", ext_id="3400", entry_type="dlc")
+        ext = ext_for(aid)
+        assert_eq(ext.get("steam_appid"), "3400", "falls back to the first id")
+        assert_eq(ext.get("steam_dlc_appids"), ["3400"], "still typed")
+
+    def t_dlc_parent_on_a_source_mapping():
+        reset()
+        aid = make_game(25)
+        add_link(aid, "steam", ext_id="3500", entry_type="game")
+        add_link(aid, "steam", ext_id="3501", entry_type="dlc",
+                 parent_kind="f95_zone", parent_source_id="12345")
+        assert_eq(ext_for(aid).get("steam_dlc_parents"),
+                  {"3501": {"kind": "f95_zone", "id": "12345"}}, "source parent")
+
+    def t_dlc_parent_on_another_manual_link():
+        """parent_link_id is a local PK, so it must be translated to the
+        parent's own (kind, id) -- the client has never seen a link_id and
+        could not resolve one. This is the shape ALL production DLC use."""
+        reset()
+        aid = make_game(26)
+        add_link(aid, "steam", ext_id="3600", entry_type="game")
+        parent = link_id_of(aid, "3600")
+        add_link(aid, "steam", ext_id="3601", entry_type="dlc",
+                 parent_kind="manual", parent_link_id=parent)
+        ext = ext_for(aid)
+        assert_eq(ext.get("steam_dlc_parents"),
+                  {"3601": {"kind": "steam", "id": "3600"}}, "resolved parent")
+        assert str(parent) not in json.dumps(ext), \
+            "a raw link_id must never reach the client"
+
+    def t_dlc_parent_added_as_a_url_still_resolves():
+        """The parent's id may itself have been derived from its url."""
+        reset()
+        aid = make_game(32)
+        add_link(aid, "steam", url="https://store.steampowered.com/app/4100/",
+                 entry_type="game")
+        parent = link_id_of(aid, None)
+        add_link(aid, "steam", ext_id="4101", entry_type="dlc",
+                 parent_kind="manual", parent_link_id=parent)
+        assert_eq(ext_for(aid).get("steam_dlc_parents"),
+                  {"4101": {"kind": "steam", "id": "4100"}}, "derived parent id")
+
+    def t_dlc_parented_across_kinds():
+        """Nothing stops an admin parenting a Steam DLC to a GOG link."""
+        reset()
+        aid = make_game(33)
+        add_link(aid, "gog", ext_id="base_g", entry_type="game")
+        parent = link_id_of(aid, "base_g")
+        add_link(aid, "steam", ext_id="4200", entry_type="dlc",
+                 parent_kind="manual", parent_link_id=parent)
+        assert_eq(ext_for(aid).get("steam_dlc_parents"),
+                  {"4200": {"kind": "gog", "id": "base_g"}}, "cross-kind parent")
+
+    def t_removed_parent_exports_null():
+        """fk_manual_links_parent is ON DELETE SET NULL, so removing a parent
+        leaves parent_kind='manual' with a NULL parent_link_id -- the state the
+        admin UI shows as "part of a removed link". The DLC id must survive it."""
+        reset()
+        aid = make_game(34)
+        add_link(aid, "steam", ext_id="4300", entry_type="game")
+        parent = link_id_of(aid, "4300")
+        add_link(aid, "steam", ext_id="4301", entry_type="dlc",
+                 parent_kind="manual", parent_link_id=parent)
+        _run("DELETE FROM atlas_manual_links WHERE link_id = %s",
+             (parent,), commit=True)
+        ext = ext_for(aid)
+        assert_eq(ext.get("steam_dlc_appids"), ["4301"], "id kept")
+        assert_eq(ext.get("steam_dlc_parents"), {"4301": None}, "parent is null")
+
+    def t_itch_dlc_is_typed():
+        """itch exports as urls rather than ids, but its type still matters."""
+        reset()
+        aid = make_game(35)
+        add_link(aid, "itch", ext_id="basegame", entry_type="game")
+        add_link(aid, "itch", ext_id="sidestory", entry_type="dlc")
+        ext = ext_for(aid)
+        assert_eq(ext.get("itch_dlc"), ["https://sidestory.itch.io"], "itch dlc")
+        assert_eq(len(ext.get("itch") or []), 2, "both still in the main list")
+
+    def t_unparented_dlc_keeps_its_id():
+        """The admin UI allows an unparented DLC; the id must not be dropped."""
+        reset()
+        aid = make_game(27)
+        add_link(aid, "steam", ext_id="3700", entry_type="game")
+        add_link(aid, "steam", ext_id="3701", entry_type="dlc")
+        ext = ext_for(aid)
+        assert_eq(ext.get("steam_dlc_appids"), ["3701"], "id kept")
+        assert_eq(ext.get("steam_dlc_parents"), {"3701": None}, "explicitly null")
+
+    def t_gog_dlc_is_typed_too():
+        reset()
+        aid = make_game(28)
+        add_link(aid, "gog", ext_id="base_gog", entry_type="game")
+        add_link(aid, "gog", ext_id="dlc_gog", entry_type="dlc")
+        ext = ext_for(aid)
+        assert_eq(ext.get("gog_dlc_ids"), ["dlc_gog"], "gog dlc ids")
+        assert_eq(ext.get("gog_id"), "base_gog", "gog scalar is the game")
+
+    def t_scraped_id_is_never_treated_as_a_dlc():
+        """A scraped id carries no entry_type, so it can only be a game."""
+        reset()
+        aid = make_game(29, external_ids={"steam_appid": "3800"})
+        add_link(aid, "steam", ext_id="3801", entry_type="dlc")
+        ext = ext_for(aid)
+        assert_eq(ext.get("steam_dlc_appids"), ["3801"], "only the manual dlc")
+        assert "3800" not in (ext.get("steam_dlc_appids") or []), ext
+        assert_eq(ext.get("steam_appid"), "3800", "scraped id is the game")
+
+    def t_dlc_added_as_a_url_is_typed():
+        """The id is derived from the url; the type must survive that path."""
+        reset()
+        aid = make_game(30)
+        add_link(aid, "steam", url="https://store.steampowered.com/app/3900/",
+                 entry_type="dlc")
+        assert_eq(ext_for(aid).get("steam_dlc_appids"), ["3900"], "typed via url")
+
+    def t_dlc_typing_survives_a_delta_export():
+        reset()
+        aid = make_game(31, last_update=100)
+        add_link(aid, "steam", ext_id="4000", entry_type="dlc")
+        ext = ext_for(aid, start_time=5000)
+        assert ext is not None, "row with links should be unioned into the delta"
+        assert_eq(ext.get("steam_dlc_appids"), ["4000"], "typed in a delta too")
 
     # -------------------------------------------------------- export scope
     def t_full_export_includes_untouched_rows():
@@ -256,6 +438,27 @@ def main():
         ("itch url spellings collapse to one", t_itch_url_forms_are_recognised_as_equal),
         ("trailing slash and www. are ignored", t_trailing_slash_and_www_are_ignored),
         ("several distinct ids all survive", t_several_distinct_ids_all_survive),
+        ("dlc ids are separated from game ids", t_dlc_ids_are_separated_from_game_ids),
+        ("the combined array still holds every id",
+         t_combined_array_still_holds_everything),
+        ("no dlc key when nothing is a dlc", t_no_dlc_key_when_nothing_is_a_dlc),
+        ("the scalar prefers a game over a dlc", t_scalar_prefers_a_game_over_a_dlc),
+        ("an all-dlc game still yields a scalar", t_all_dlc_still_yields_a_scalar),
+        ("a dlc parented to a source mapping is exported",
+         t_dlc_parent_on_a_source_mapping),
+        ("a dlc parented to another manual link is exported",
+         t_dlc_parent_on_another_manual_link),
+        ("a dlc parent added as a url still resolves",
+         t_dlc_parent_added_as_a_url_still_resolves),
+        ("a dlc parented across kinds is exported", t_dlc_parented_across_kinds),
+        ("a removed parent exports null", t_removed_parent_exports_null),
+        ("itch dlc is typed", t_itch_dlc_is_typed),
+        ("an unparented dlc keeps its id", t_unparented_dlc_keeps_its_id),
+        ("gog dlc is typed too", t_gog_dlc_is_typed_too),
+        ("a scraped id is never treated as a dlc",
+         t_scraped_id_is_never_treated_as_a_dlc),
+        ("a dlc added as a url is typed", t_dlc_added_as_a_url_is_typed),
+        ("dlc typing survives a delta export", t_dlc_typing_survives_a_delta_export),
         ("a FULL export includes rows never exported before",
          t_full_export_includes_untouched_rows),
         ("a FULL export includes NULL-timestamp rows",
