@@ -28,20 +28,31 @@ Run modes:
                                            #   exit (still paced at 1/10s)
 
 Env:
-    REFRESH_INTERVAL   seconds between job starts (default 10)
-    REFRESH_IDLE_SLEEP seconds to wait when the queue is empty, daemon mode
-                       (default 5)
+    REFRESH_INTERVAL      seconds between job starts (default 10)
+    REFRESH_IDLE_SLEEP    seconds to wait when the queue is empty, daemon mode
+                          (default 5)
+    REFRESH_ERROR_SLEEP   seconds to back off after an unexpected loop error
+                          (default 30)
+    REFRESH_HEARTBEAT     seconds between "still idle" log lines (default 300,
+                          0 disables)
+    REFRESH_STALE_CLAIM   seconds after which a row left in 'processing' is
+                          reclaimed at startup (default 900, 0 disables)
 """
 import os
 import sys
 import time
+import traceback
 
+from scraper.agents import as_outcome
 from scraper.config import config
 from scraper.utils.db import (
     CreateDatabase,
+    countPendingRefresh,
     getNextPendingRefresh,
     markRefreshProcessing,
     markRefreshResult,
+    maxRefreshQueueId,
+    reclaimStaleRefreshProcessing,
 )
 from scraper.auth import F95Session, LCSession
 from scraper.agents.f95 import f95
@@ -60,6 +71,27 @@ def _idle_sleep():
         return float(os.environ.get("REFRESH_IDLE_SLEEP", "5"))
     except ValueError:
         return 5.0
+
+
+def _error_sleep():
+    try:
+        return float(os.environ.get("REFRESH_ERROR_SLEEP", "30"))
+    except ValueError:
+        return 30.0
+
+
+def _heartbeat():
+    try:
+        return float(os.environ.get("REFRESH_HEARTBEAT", "300"))
+    except ValueError:
+        return 300.0
+
+
+def _stale_claim_age():
+    try:
+        return float(os.environ.get("REFRESH_STALE_CLAIM", "900"))
+    except ValueError:
+        return 900.0
 
 
 def _build_agents():
@@ -107,21 +139,38 @@ def _process_one(agents, db_type):
         return True
 
     try:
-        ok = agent.refresh_one(item_id, db_type)
-        if ok:
+        result = as_outcome(agent.refresh_one(item_id, db_type))
+        if result.ok:
             markRefreshResult(queue_id, True, db_type=db_type)
-            print(f"   done queue_id={queue_id} source={source} id={item_id}")
+            print(f"   done queue_id={queue_id} source={source} id={item_id}"
+                  f" ({result.code})")
         else:
+            # Record the agent's OWN reason. Previously every failure -- a
+            # transient 403, a mapped row with no stored URL, a deliberate
+            # refusal to guess at a mapping -- was written as one hardcoded
+            # string, so last_error told you nothing and the only real
+            # explanation was a stdout line that had usually rotated away.
             markRefreshResult(queue_id, False,
-                               error="refresh_one returned False "
-                                     "(detail fetch failed, or not yet mapped)",
+                               error=f"[{result.code}] {result.message}",
                                db_type=db_type)
-            print(f"   ERROR queue_id={queue_id} source={source} id={item_id} "
-                  f"(see log above for the reason)")
+            print(f"   ERROR queue_id={queue_id} source={source} "
+                  f"id={item_id}: {result.code}")
     except Exception as ex:
         markRefreshResult(queue_id, False, error=str(ex), db_type=db_type)
         print(f"   ERROR queue_id={queue_id} source={source} id={item_id}: {ex}")
     return True
+
+
+def _log_idle(db_type, idle_seconds):
+    """One line describing what the worker can currently SEE in the queue."""
+    try:
+        pending = countPendingRefresh(db_type)
+        max_id = maxRefreshQueueId(db_type)
+    except Exception as ex:
+        print(f"queue empty; idle {idle_seconds}s (queue read failed: {ex})")
+        return
+    print(f"queue empty; idle {idle_seconds}s "
+          f"(visible: pending={pending}, max_queue_id={max_id})")
 
 
 def main(argv=None):
@@ -132,6 +181,16 @@ def main(argv=None):
         print(__doc__)
         return 0
 
+    # Line-buffer stdout. Under PM2 stdout is a pipe, so Python block-buffers
+    # at ~8KB by default and the log lags reality by minutes -- which makes a
+    # healthy worker and a wedged one look identical in `pm2 logs`. Set in code
+    # rather than relying on PYTHONUNBUFFERED being present in the PM2 env.
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+        sys.stderr.reconfigure(line_buffering=True)
+    except (AttributeError, ValueError):
+        pass
+
     db_type = config.resolve_db_type()
     print(f"Running -> MySQL @ {config.host()}")
     print("  env:", config.env_status())
@@ -139,11 +198,27 @@ def main(argv=None):
 
     interval = _interval()
     idle = _idle_sleep()
+    error_sleep = _error_sleep()
+    heartbeat = _heartbeat()
     agents = _build_agents()
+
+    # Reclaim anything stranded in 'processing' by a previous crash/restart.
+    # getNextPendingRefresh only selects 'pending', so without this those rows
+    # are never retried. Safe here: this process has claimed nothing yet, so
+    # any row still 'processing' past the age threshold is by definition dead.
+    stale_age = _stale_claim_age()
+    if stale_age > 0:
+        try:
+            reclaimed = reclaimStaleRefreshProcessing(stale_age, db_type)
+            if reclaimed:
+                print(f"reclaimed {len(reclaimed)} stale processing row(s) "
+                      f"-> pending: {reclaimed}")
+        except Exception as ex:
+            print(f"warning: stale-claim sweep failed: {ex}")
 
     mode = "once" if once else ("drain" if drain else "daemon")
     print(f"Refresh worker started (mode={mode}, interval={interval}s/job, "
-          f"sources={', '.join(sorted(agents))})")
+          f"idle={idle}s, sources={', '.join(sorted(agents))})")
 
     if once:
         did = _process_one(agents, db_type)
@@ -153,16 +228,44 @@ def main(argv=None):
 
     # daemon / drain: pace by job START time so total throughput is exactly
     # one job per `interval`, no matter how long a refresh itself takes.
+    idle_since = None
+    last_beat = 0.0
     while True:
         started = time.monotonic()
-        did = _process_one(agents, db_type)
+
+        # A transient DB or agent failure must not take the process down. The
+        # loop previously had no handler at all, so one raised exception
+        # exited main() and left PM2 to restart from scratch -- stranding the
+        # in-flight row in 'processing' every time.
+        try:
+            did = _process_one(agents, db_type)
+        except Exception as ex:
+            print(f"!! loop error: {type(ex).__name__}: {ex}")
+            traceback.print_exc()
+            time.sleep(error_sleep)
+            continue
 
         if not did:
             if drain:
                 print("queue drained; exiting")
                 return 0
+            # Idle heartbeat. An idle worker and a wedged one are otherwise
+            # indistinguishable in the log -- both are silent. Reporting the
+            # counts THIS CONNECTION can see also exposes a snapshot-pinned
+            # read view: if max_queue_id stays frozen while the admin UI keeps
+            # climbing, the worker is not idle, it is reading a stale view.
+            now = time.monotonic()
+            if idle_since is None:
+                idle_since = now
+                last_beat = now
+                _log_idle(db_type, 0)
+            elif heartbeat > 0 and (now - last_beat) >= heartbeat:
+                last_beat = now
+                _log_idle(db_type, int(now - idle_since))
             time.sleep(idle)
             continue
+
+        idle_since = None
 
         # Pace to one job per interval, subtracting time already spent.
         elapsed = time.monotonic() - started

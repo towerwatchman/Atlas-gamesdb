@@ -55,6 +55,26 @@ class AuthError(RuntimeError):
     pass
 
 
+def _auth_ttl():
+    """How long a session is trusted without re-verification, in seconds.
+    0 disables the periodic check. Guards against `_authenticated` being set
+    once at startup and never questioned again for the life of a daemon."""
+    try:
+        return float(os.environ.get("XF_AUTH_TTL", "1800"))
+    except ValueError:
+        return 1800.0
+
+
+def _reauth_cooldown():
+    """Minimum gap between forced re-logins triggered by an HTTP 401/403.
+    Without this, a thread that is legitimately 403 (deleted, or behind a
+    permission wall) would trigger a full login on every retry attempt."""
+    try:
+        return float(os.environ.get("XF_REAUTH_COOLDOWN", "300"))
+    except ValueError:
+        return 300.0
+
+
 class XenForoSession:
     """Generic XenForo 2.x authenticated session: cookie persistence + lazy
     login + liveness via the `data-logged-in` flag. Subclasses set the site
@@ -72,6 +92,8 @@ class XenForoSession:
         self.session = requests.Session()
         self.session.headers.update(DEFAULT_HEADERS)
         self._authenticated = False
+        self._auth_checked_at = 0.0   # monotonic stamp of last liveness proof
+        self._last_reauth = 0.0       # monotonic stamp of last forced login
         self._load_cookies()
 
     # ---- credentials (subclass overrides) ----------------------------------
@@ -158,30 +180,79 @@ class XenForoSession:
                 "in .env, and whether the account triggered a captcha."
             )
         self._authenticated = True
+        self._auth_checked_at = time.monotonic()
         self._save_cookies()
 
     def ensure_authenticated(self):
-        """Reuse the cached cookie; only log in when it has expired."""
+        """Reuse the cached cookie; only log in when it has expired.
+
+        `_authenticated` is re-verified once every XF_AUTH_TTL seconds rather
+        than being trusted for the whole life of the process. A daemon that
+        set the flag at startup and never rechecked it would keep believing
+        it was logged in for days after the cookie died.
+        """
+        ttl = _auth_ttl()
         if self._authenticated:
-            return
+            if ttl <= 0:
+                return
+            if (time.monotonic() - self._auth_checked_at) < ttl:
+                return
+            # Stale: prove it, cheaply, rather than assuming.
+            if self.is_logged_in():
+                self._auth_checked_at = time.monotonic()
+                self._save_cookies()
+                return
+            self._authenticated = False
         if self.is_logged_in():
             self._authenticated = True
+            self._auth_checked_at = time.monotonic()
             # Refresh the on-disk copy in case cookies rotated.
             self._save_cookies()
             return
         self.login()
 
+    def _reauth_if_allowed(self, status_code):
+        """Force a fresh login, unless we just did one. Returns True if a
+        login actually happened (so the caller should retry the request)."""
+        now = time.monotonic()
+        cooldown = _reauth_cooldown()
+        if cooldown > 0 and (now - self._last_reauth) < cooldown:
+            return False
+        self._last_reauth = now
+        self._authenticated = False
+        try:
+            self.login()
+        except AuthError as ex:
+            print(f"  re-auth after HTTP {status_code} failed: {ex}")
+            return False
+        return True
+
     # ---- request helpers ----------------------------------------------------
     def get(self, url, **kwargs):
         """Authenticated GET. Verifies the session is live, retrying login
-        once if the cookie expired mid-run."""
+        once if the cookie expired mid-run.
+
+        Two ways a dead session shows up, and BOTH have to be handled:
+          * HTTP 200 with data-logged-in="false" -- the soft logout.
+          * HTTP 401/403 -- the hard one. A challenge or a lapsed cookie can
+            come back as 403 rather than a logged-out page. The old code only
+            checked the 200 case, so once the site started answering 403 the
+            session could never recover: ensure_authenticated() short-circuits
+            on `_authenticated`, which nothing ever cleared. Every subsequent
+            request failed identically until the process was restarted.
+        The cooldown in _reauth_if_allowed stops a genuinely-403 thread
+        (deleted / permission-walled) from triggering a login storm.
+        """
         self.ensure_authenticated()
         kwargs.setdefault("timeout", 30)
         r = self.session.get(url, **kwargs)
-        # If F95 silently logged us out, re-auth once and retry.
-        if r.status_code == 200 and not self._is_logged_in_html(r.text):
+        if r.status_code in (401, 403):
+            if self._reauth_if_allowed(r.status_code):
+                r = self.session.get(url, **kwargs)
+        elif r.status_code == 200 and not self._is_logged_in_html(r.text):
             self._authenticated = False
             self.login()
+            self._auth_checked_at = time.monotonic()
             r = self.session.get(url, **kwargs)
         return r
 
@@ -196,12 +267,17 @@ class XenForoSession:
         self.ensure_authenticated()
         kwargs.setdefault("timeout", 30)
         r = self.session.get(url, **kwargs)
+        if r.status_code in (401, 403):
+            # Same hard-logout case as get(); the feed can be gated too.
+            if self._reauth_if_allowed(r.status_code):
+                r = self.session.get(url, **kwargs)
         ct = r.headers.get("Content-Type", "")
         if r.status_code == 200 and "json" not in ct.lower():
             # Probably got served an HTML page because the session lapsed.
             if not self._is_logged_in_html(r.text):
                 self._authenticated = False
                 self.login()
+                self._auth_checked_at = time.monotonic()
                 r = self.session.get(url, **kwargs)
         try:
             return r.json()

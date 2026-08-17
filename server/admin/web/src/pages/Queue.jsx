@@ -217,6 +217,7 @@ export default function Queue() {
             <option value="">All</option>
             <option value="multi">Multi-match</option>
             <option value="fuzzy">Fuzzy</option>
+            <option value="new">New (unmatched)</option>
           </select>
         </div>
       </div>

@@ -37,7 +37,9 @@
       "env_files": [
         ".env"
       ],
-      "post_commands": []
+      "post_commands": [
+        "pm2 restart atlas-worker"
+      ]
     },
     "node": {
       "label": "Node admin server",

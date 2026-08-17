@@ -20,6 +20,8 @@ import json
 import re
 import time
 
+import os
+
 import mysql.connector
 from mysql.connector import errors as mysql_errors
 
@@ -35,6 +37,46 @@ ALLOWED_TABLES = {
 }
 
 _conn = None  # the one shared connection for this process; see _connect().
+
+# Errors that mean "the connection is gone", as opposed to "your SQL was
+# wrong". Only these are worth closing the handle and retrying once; a
+# ProgrammingError or IntegrityError must NOT be retried, because replaying
+# the statement on a fresh connection would double-apply it.
+#
+# The errno list matters more than the exception class. Connector/Python's
+# C extension raises a BARE DatabaseError for 2003 (can't connect) and 2006
+# (server has gone away) -- and OperationalError is a *subclass* of
+# DatabaseError, so the previous `except mysql_errors.OperationalError`
+# caught neither. Only 2013 happened to land in OperationalError, which is
+# why the reconnect-and-retry logic below appeared to work and mostly did
+# not.
+_CONNECTION_ERRNOS = {
+    1927,  # connection was killed
+    2003,  # can't connect to MySQL server
+    2006,  # MySQL server has gone away
+    2013,  # lost connection during query
+    2055,  # lost connection, system error
+    4031,  # client was disconnected by the server (idle timeout)
+}
+
+
+def _is_connection_error(ex):
+    if isinstance(ex, mysql_errors.InterfaceError):
+        # "MySQL Connection not available" / "Unread result found" -- note
+        # InterfaceError descends straight from Error, NOT from
+        # OperationalError, so it also escaped the old handler.
+        return True
+    return getattr(ex, "errno", None) in _CONNECTION_ERRNOS
+
+
+def _connect_timeout():
+    """Seconds to wait on connect. Also bounds socket waits on the C
+    extension, so a half-open socket (mysqld killed without sending RST)
+    raises instead of blocking the process forever."""
+    try:
+        return int(os.environ.get("DB_CONNECT_TIMEOUT", "15"))
+    except ValueError:
+        return 15
 
 
 def _check_table(table):
@@ -61,13 +103,29 @@ def _new_connection():
     # a RUNNING transaction with trx_query=NULL, i.e. blocked on nothing,
     # holding the lock the ALTER needed simply because it had never committed.
     # Once that connection closed, the exact same ALTER completed instantly.
-    return mysql.connector.connect(
+    con = mysql.connector.connect(
         user=config.db_user(),
         password=config.db_password(),
         host=config.host(),
         database=config.database(),
         autocommit=True,
+        connection_timeout=_connect_timeout(),
     )
+    # READ COMMITTED, not MySQL's default REPEATABLE READ. A queue consumer
+    # must see rows another process committed AFTER its own transaction
+    # started; under REPEATABLE READ it cannot, by definition. Combined with
+    # autocommit=True this is belt-and-braces -- either one alone prevents
+    # the stall -- but a poller has no legitimate use for a stable snapshot
+    # across statements, so the weaker level is simply the correct one here.
+    try:
+        cur = con.cursor()
+        cur.execute("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+        cur.close()
+    except mysql_errors.Error as ex:
+        # Not fatal (autocommit still protects us); say so rather than
+        # failing the connection outright.
+        print(f"warning: could not set READ COMMITTED isolation: {ex}")
+    return con
 
 
 def _connect(db_type=None):
@@ -114,10 +172,27 @@ def _run(sql, params=(), commit=False, fetch=None, dict_cursor=False):
             else:
                 result = None
             cur.close()
+            if not commit:
+                # Explicitly end the read-only transaction. With
+                # autocommit=True there is nothing open and this is a no-op;
+                # if autocommit is ever lost (an old build still resident in
+                # a long-running process, a config change, a pooled
+                # connection from elsewhere) this is what stops a read-only
+                # poll from pinning a snapshot forever. That exact failure
+                # stalled atlas-worker for 12 days: a SELECT on an empty
+                # queue opened a transaction that never committed, so every
+                # subsequent poll answered from the same frozen read view and
+                # rows enqueued afterwards were permanently invisible.
+                try:
+                    con.rollback()
+                except mysql_errors.Error:
+                    pass
             return result
-        except mysql_errors.OperationalError:
-            # Connection actually dropped -- drop it and let the next loop
-            # iteration open a fresh one and retry once.
+        except mysql_errors.Error as ex:
+            if not _is_connection_error(ex):
+                # Real SQL/data error. Retrying would re-run the statement,
+                # so surface it as-is; the connection is still usable.
+                raise
             try:
                 con.close()
             except Exception:
@@ -816,6 +891,59 @@ def markRefreshResult(queue_id, ok, error=None, db_type=None):
         ("done" if ok else "error", now, last_error, queue_id),
         commit=True,
     )
+
+
+def countPendingRefresh(db_type=None):
+    """How many pending rows this connection can SEE. Deliberately phrased
+    that way: if the worker's own count disagrees with what the admin UI
+    shows, the worker is reading a stale snapshot, not idle."""
+    row = _run(
+        "SELECT COUNT(*) FROM f95_refresh_queue WHERE status = 'pending'",
+        fetch="one",
+    )
+    return int(row[0]) if row else 0
+
+
+def maxRefreshQueueId(db_type=None):
+    """Highest queue_id visible to this connection. Logged in the worker's
+    idle heartbeat: if it stays frozen while new rows are being enqueued,
+    the connection is snapshot-pinned."""
+    row = _run("SELECT MAX(queue_id) FROM f95_refresh_queue", fetch="one")
+    return int(row[0]) if row and row[0] is not None else 0
+
+
+def reclaimStaleRefreshProcessing(older_than=900, db_type=None):
+    """Reset rows abandoned in 'processing' back to 'pending'.
+
+    getNextPendingRefresh only selects status='pending', so a row claimed by
+    a worker that then died (deploy, OOM, restart mid-job) is stranded
+    forever and never retried. Called once at worker startup: anything still
+    'processing' at that moment cannot belong to a live job, because this
+    process has not claimed anything yet. `older_than` guards the case where
+    a second worker is legitimately mid-job.
+
+    Returns the list of reclaimed queue_ids.
+    """
+    cutoff = int(time.time()) - int(older_than)
+    rows = _run(
+        """
+        SELECT queue_id FROM f95_refresh_queue
+        WHERE status = 'processing' AND started_at < %s
+        """,
+        (cutoff,), fetch="all",
+    )
+    if not rows:
+        return []
+    ids = [r[0] for r in rows]
+    placeholders = ",".join(["%s"] * len(ids))
+    _run(
+        f"""
+        UPDATE f95_refresh_queue SET status = 'pending'
+        WHERE queue_id IN ({placeholders}) AND status = 'processing'
+        """,
+        tuple(ids), commit=True,
+    )
+    return ids
 
 
 def enqueueRefresh(source, item_id, requested_by="python", priority=100,

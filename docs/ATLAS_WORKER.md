@@ -37,28 +37,55 @@ existing table rather than standing up a second queue (migration 009).
   claimed row and dispatches to `f95.refresh_one()` or `lewdcorner.refresh_one()`
   accordingly. Each agent gets its own session (F95Session / LCSession), built
   once at startup in `_build_agents()`.
-- **LewdCorner's `refresh_one` is deliberately narrower than F95's.** F95 can
-  safely find-or-create a game for an unseen `f95_id`, because the thread id
-  maps 1:1 with no ambiguity. An unmapped `lc_id` can't take that shortcut —
-  it needs the same exact/fuzzy/multi matching the review queue exists for.
-  So `lewdcorner.refresh_one()` refuses (cleanly, logging why) if the `lc_id`
-  isn't already linked to an atlas row, rather than guessing. Queue an unmapped
-  LC thread through the review queue first, then refresh it.
-- The **F95 quick-add box** on the Refresh queue page stays F95-only on
-  purpose: an LC thread's real URL needs a title slug the queue never stores
-  (`.../threads/eternum.555/`, not just `555`), so there's no safe way to turn
-  a bare `lc_id` into a link there. Queue an LC refresh from the game's Mapped
-  sources panel instead, where the real `site_url` is already known. The page
-  does still *list and filter* LC rows (`?source=lc`) so an admin can see
-  what's in flight regardless of where it was queued from.
+- **An unmapped `lc_id` is handled, but never blind-inserted.** F95 can safely
+  find-or-create a game for an unseen `f95_id`, because the thread id maps 1:1
+  with no ambiguity. An `lc_id` doesn't: the same LC thread may or may not
+  correspond to an atlas row that already exists under a different site's
+  spelling. So `lewdcorner.refresh_one()` routes an unmapped id through
+  `_refresh_unmapped()`, which reuses `run()`'s matching rules:
+
+  | Outcome | Action | `RefreshOutcome.code` |
+  | --- | --- | --- |
+  | exactly 1 exact `id_name` match | link, write the `lewdcorner` row | `linked` |
+  | more than 1 exact match | `lc_review_queue`, kind `multi` | `queued_multi` |
+  | fuzzy best above `LC_REVIEW_FLOOR` | `lc_review_queue`, kind `fuzzy` | `queued_fuzzy` |
+  | nothing resembling it | `lc_review_queue`, kind `new` | `queued_new` |
+
+  Note the last row: unlike `run()`, this path **never inserts a brand-new
+  atlas row**. `run()` may, because it is working from LC's own listing feed
+  and has seen the game in context; a refresh request is just an id somebody
+  typed, and minting an atlas row from that shouldn't happen unlooked-at. The
+  `new` kind is one the scraper itself never produces — the admin queue treats
+  any non-`fuzzy` kind as an exact-`id_name` lookup, which correctly returns no
+  candidates, so the reviewer is offered "create as new".
+
+- **URL resolution for a bare `lc_id`.** LC thread URLs carry a title slug
+  (`.../threads/eternum.555/`) which the queue never stores. `_resolve_site_url`
+  fetches the bare `/threads/<id>/` form and follows XenForo's redirect to the
+  canonical URL, keeping whatever it lands on rather than constructing one — so
+  if LC ever stops honouring the short form this fails loudly (`url_unresolved`)
+  instead of scraping a 404 page. The **F95 quick-add box** on the Refresh queue
+  page is therefore no longer blocked on this; the page also still lists and
+  filters LC rows (`?source=lc`).
+
+- **Every `refresh_one` returns a `RefreshOutcome`, not a bool.** It carries
+  `ok`, a stable `code`, and a human `message`, and is truthy on `ok` so
+  existing `if agent.refresh_one(...)` callers in `tools/refresh/` are
+  unaffected. The worker writes `[code] message` into
+  `f95_refresh_queue.last_error`. Previously every failure — a transient 403, a
+  mapped row with no stored URL, a deliberate refusal — was recorded as the one
+  string `"refresh_one returned False (detail fetch failed, or not yet
+  mapped)"`, so the queue row explained nothing and the only real diagnosis was
+  a stdout line that had usually rotated away.
 
 So a game with **no F95 thread and no LewdCorner thread** — DLsite-only,
 SxS-only, or an atlas row created by hand — still cannot be queued for
 refresh. There's no `dlsite`/`sxs` agent branch yet.
 
 Adding a third source means: give it a `refresh_one(id, db_type)` method on its
-agent (mirroring `lewdcorner.refresh_one` — decide up front whether it can
-safely find-or-create, like F95, or needs to refuse an unmapped id, like LC),
+agent (mirroring `lewdcorner.refresh_one` — decide up front whether an unseen
+id can safely find-or-create, like F95, or has to be matched first, like LC;
+return a `RefreshOutcome` either way),
 add it to `_build_agents()` in the worker, add it to `REFRESH_SOURCES` in
 `lib/f95Refresh.js`, and decide whether it gets its own quick-add box or relies
 on SourcePanel like LC does. The process name won't need to change.
@@ -152,6 +179,12 @@ Both are read from the environment at startup, so set them via PM2 and restart:
 | --- | --- | --- |
 | `REFRESH_INTERVAL` | `10` | seconds between job *starts* |
 | `REFRESH_IDLE_SLEEP` | `5` | seconds to wait when the queue is empty |
+| `REFRESH_ERROR_SLEEP` | `30` | backoff after an unexpected loop error |
+| `REFRESH_HEARTBEAT` | `300` | seconds between idle heartbeat lines (`0` = off) |
+| `REFRESH_STALE_CLAIM` | `900` | age at which a stranded `processing` row is reclaimed at startup (`0` = off) |
+| `DB_CONNECT_TIMEOUT` | `15` | seconds before a MySQL connect/socket wait gives up |
+| `XF_AUTH_TTL` | `1800` | seconds before a live forum session is re-verified (`0` = off) |
+| `XF_REAUTH_COOLDOWN` | `300` | minimum gap between forced re-logins after a 401/403 |
 
 ```bash
 pm2 restart atlas-worker --update-env
@@ -167,7 +200,7 @@ imported `scraper/` code in memory. Deploying new scraper code drops new `.py`
 files on disk and the running worker **keeps executing the old ones** until it is
 restarted.
 
-The `python` deploy target has an empty `post_commands`. Add the restart:
+The `python` deploy target now carries the restart in `post_commands`:
 
 ```json
 "post_commands": [
@@ -175,8 +208,12 @@ The `python` deploy target has an empty `post_commands`. Add the restart:
 ]
 ```
 
-Until that's in place, treat `pm2 restart atlas-worker` as a manual step after
-any deploy that touches `scraper/**` or `f95_refresh_worker.py`.
+`deploy/deploy.json` is gitignored, so this has to be applied to the real file
+on whichever machine runs the deploy tool — `deploy.example.json` in the repo
+only documents it. Until the real file has it, `pm2 restart atlas-worker` is a
+manual step after any deploy touching `scraper/**` or `f95_refresh_worker.py`.
+Skipping it does not just delay new code; it is what caused
+[the snapshot stall](#the-snapshot-stall).
 
 ## LewdCorner support needs migration 009
 
@@ -213,8 +250,10 @@ mysql -u root -p games -e \
    VALUES ('93340','f95','pending',100,'manual-test',UNIX_TIMESTAMP());"
 ```
 
-...or a LewdCorner thread that's already mapped to an atlas row (an unmapped
-`lc_id` will correctly be refused — see the scope section above):
+...or any LewdCorner thread. An `lc_id` already mapped to an atlas row is
+refreshed in place; an unmapped one is matched and either linked or parked in
+`lc_review_queue` (see the scope section above), so check `last_error` for the
+`[code]` prefix to see which happened:
 
 ```bash
 mysql -u root -p games -e \
@@ -232,15 +271,20 @@ mysql -u root -p games -e \
 summary cards read the same table, so it should show there too (filter by
 source if it's not obvious which row is which).
 
-## Known gap: rows stuck in `processing`
+## Rows stuck in `processing`
 
 `getNextPendingRefresh` only selects `status='pending'` (regardless of
-source). Nothing reclaims a row left in `processing`, so if the worker dies
-mid-job — a deploy, an OOM, a `pm2 restart` at the wrong moment — that row is
-stranded and will never be retried.
+source), so a row left in `processing` by a worker that died mid-job — a
+deploy, an OOM, a `pm2 restart` at the wrong moment — is not picked up again
+by the normal claim path.
 
-It's recoverable by hand: the **Retry** button on the Refresh queue page resets
-the row to `pending`. To find strays:
+The worker now sweeps these at **startup**: anything still `processing` and
+older than `REFRESH_STALE_CLAIM` (default 900s) is reset to `pending` and
+logged. Since the process has claimed nothing at that point, any such row is
+by definition dead. Set `REFRESH_STALE_CLAIM=0` to disable.
+
+Rows stranded *while* the worker stays up are still manual: the **Retry**
+button on the Refresh queue page resets the row to `pending`. To find strays:
 
 ```sql
 SELECT queue_id, f95_id, source, attempts, FROM_UNIXTIME(started_at) AS started
@@ -325,10 +369,67 @@ mysql -u root -p games -e \
 
 **5. Everything above checks out and it's still stuck:**
 
-Possibly wedged inside a hung network call rather than crashed. `pm2 status`
-showing long uptime with zero restarts and no new log lines is the tell.
-`pm2 restart atlas-worker` is safe to try; any in-flight row will need a Retry
-afterward.
+`pm2 status` showing long uptime with zero restarts and no new log lines is
+the tell. Two distinct causes, and the queue rows tell them apart:
+
+- A row in `processing` with a stale `started_at` → wedged inside a hung
+  network call. `py-spy dump --pid $(pm2 pid atlas-worker)` shows the frame.
+- Rows in `pending` with `attempts = 0` and nothing in `processing` → the
+  worker never even tried to claim them. It is polling and being told the
+  queue is empty. See [the snapshot stall](#the-snapshot-stall) below.
+
+The idle heartbeat exists for exactly this. A healthy idle worker prints, every
+`REFRESH_HEARTBEAT` seconds (default 300):
+
+```
+queue empty; idle 610s (visible: pending=0, max_queue_id=2246)
+```
+
+If `max_queue_id` stays frozen while the Refresh queue page shows higher ids,
+the worker is not idle — it is reading a stale snapshot.
+
+`pm2 restart atlas-worker` clears either; any in-flight row is reclaimed by the
+startup sweep.
+
+## The snapshot stall
+
+Recorded because it cost 12 days of silently-dropped refreshes and looks like
+nothing at all from the outside.
+
+MySQL defaults to `REPEATABLE READ`. A transaction's read view is pinned at its
+first read and does not advance until something commits. With `autocommit` off,
+`getNextPendingRefresh`'s bare `SELECT` opens such a transaction. If the queue
+happens to be empty at that instant it returns `None`, the worker goes to
+`time.sleep(idle)`, and **nothing ever commits** — because commits only happen
+inside `markRefreshProcessing` / `markRefreshResult`, neither of which is
+reached without a claimed row. Every subsequent poll answers from the same
+frozen view, so rows enqueued afterwards are permanently invisible. It is
+self-locking: only dropping the connection clears it.
+
+Symptoms: `pm2 status` online, long uptime, 0% CPU, no errors, no new log lines;
+queue rows `pending` with `attempts = 0`; and one long-running transaction:
+
+```sql
+SELECT trx_id, trx_state, trx_started, trx_query, trx_mysql_thread_id
+  FROM information_schema.INNODB_TRX;
+```
+
+`trx_state = RUNNING` with `trx_query = NULL` and a `trx_started` matching the
+process start time is the signature.
+
+Three things now prevent it, any one of which is sufficient:
+
+- `autocommit=True` on the connection (each statement is its own transaction).
+- `SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED` on connect — the
+  correct level for a queue consumer, which has no use for a stable
+  cross-statement snapshot.
+- An explicit `rollback()` after every read-only `_run()`, releasing the read
+  view even if the other two are somehow lost.
+
+The original trigger was a deploy: `scraper/utils/db.py` gained `autocommit=True`
+but the running worker kept the old module in memory for 12 days. See
+[Deploys do not restart it](#deploys-do-not-restart-it) — now automated via the
+`python` target's `post_commands`.
 
 ## Why not cron
 

@@ -68,6 +68,7 @@ from scraper.auth import LCSession
 from scraper.datatypes.data import data
 from scraper.datatypes.record import gameRecord
 from scraper.utils.epoch import epoch
+from scraper.agents import RefreshOutcome
 from scraper.agents.lc_detail import parse_lc_thread
 from scraper.utils.db import (
     UpdatetableDynamic, getAtlasIdByLcId, findIdByTitle,
@@ -168,6 +169,30 @@ _VERSION_SUFFIX_RE = re.compile(r"\s*-\s*Version\s*:.*$", re.IGNORECASE)
 
 def _strip_version_suffix(title):
     return _VERSION_SUFFIX_RE.sub("", title or "").strip()
+
+
+def _title_from_page(detail):
+    """Game name from a thread page's H1.
+
+    The API listing gives a clean title; the H1 does not. It reads
+    "<prefixes> <Game Name> [v1.006] [Kosmos Games]", and lc_detail
+    deliberately LEAVES the bracket groups in place because it mines them for
+    version and developer. Anything deriving id_name from the page therefore
+    has to strip them first -- otherwise id_name comes out as
+    SUNSETROSEV02_LEWDLAB instead of SUNSETROSE_LEWDLAB and never matches the
+    atlas row it is supposed to link to.
+
+    Same treatment f95.refresh_one applies to its own H1, for the same reason.
+    """
+    raw = _normalize_ws(detail.get("title") or "")
+    if not raw:
+        return ""
+    no_brackets = re.sub(r"\s*\[[^\[\]]*\]\s*", " ", raw).strip()
+    for pref in (detail.get("prefixes") or []):
+        pref = pref.strip()
+        if pref and no_brackets.startswith(pref):
+            no_brackets = no_brackets[len(pref):].lstrip()
+    return _strip_version_suffix(_normalize_ws(no_brackets or raw))
 
 
 def _normalize_ws(s):
@@ -546,15 +571,16 @@ class lewdcorner:
         lc_id = str(lc_id)
         atlas_id = getAtlasIdByLcId(lc_id, db_type)
         if not atlas_id:
-            print(f"  lc {lc_id}: no existing atlas mapping; refusing to "
-                  f"guess. Resolve it via the review queue first, then refresh.")
-            return False
+            # No mapping yet. Rather than refusing outright, run the SAME
+            # match logic run() uses -- see _refresh_unmapped.
+            return self._refresh_unmapped(lc_id, db_type)
 
         site_url = getLcSiteUrl(lc_id, db_type)
         if not site_url:
-            print(f"  lc {lc_id}: mapped to atlas_id {atlas_id} but has no "
-                  f"stored site_url; nothing to fetch.")
-            return False
+            msg = (f"lc {lc_id}: mapped to atlas_id {atlas_id} but has no "
+                   f"stored site_url; nothing to fetch.")
+            print("  " + msg)
+            return RefreshOutcome(False, "no_site_url", msg)
 
         atlas = gameRecord.atlasRecord()
         lc = gameRecord.lcRecord()
@@ -565,9 +591,12 @@ class lewdcorner:
         print("refresh:", lc_id, site_url)
         detail = self._fetch_detail(lc_id, site_url)
         if not detail:
+            msg = (f"lc {lc_id}: detail fetch failed after "
+                   f"{int(os.environ.get('LC_DETAIL_RETRIES', '2')) + 1} "
+                   f"attempt(s); existing row left untouched.")
             print(f"  refresh failed (detail fetch); leaving existing row "
                   f"untouched: {lc_id}")
-            return False
+            return RefreshOutcome(False, "detail_fetch_failed", msg)
 
         now = int(time.time())
         self._apply_detail(atlas, lc, detail)
@@ -582,7 +611,166 @@ class lewdcorner:
             touchAtlasRecord(atlas_id, db_type, now)
         UpdatetableDynamic("lewdcorner", self._clean(lc), db_type)
         print("  refreshed lc_id", lc_id)
-        return True
+        return RefreshOutcome(True, "refreshed",
+                              f"lc {lc_id}: refreshed atlas_id {atlas_id}")
+
+    # ---- unmapped lc_id ----------------------------------------------------
+    def _resolve_site_url(self, lc_id):
+        """Canonical thread URL for a bare lc_id.
+
+        LewdCorner URLs carry a title slug (/threads/<slug>.<id>/) which we do
+        not have for an id that was never scraped. XenForo accepts the bare
+        /threads/<id>/ form and redirects to the canonical slug URL -- the same
+        behaviour the F95 agent already relies on. We follow the redirect and
+        keep whatever URL we actually land on rather than constructing one, so
+        if LC ever stops honouring the short form this fails loudly instead of
+        scraping a 404 page.
+
+        Returns the resolved URL, or None (deleted thread, permission-walled,
+        or the short form is not supported).
+        """
+        probe = f"{BASE}/threads/{lc_id}/"
+        try:
+            _jitter()
+            res = self.session.get(probe, timeout=30, allow_redirects=True)
+        except Exception as ex:
+            print(f"  lc {lc_id}: url probe error: {ex}")
+            return None
+        if res.status_code != 200:
+            print(f"  lc {lc_id}: url probe returned HTTP {res.status_code} "
+                  f"for {probe}")
+            return None
+        final = res.url or probe
+        if "/threads/" not in final:
+            print(f"  lc {lc_id}: url probe landed off-thread: {final}")
+            return None
+        return final
+
+    def _records_from_detail(self, lc_id, site_url, detail):
+        """Build (atlas, lc) records from a thread page alone.
+
+        The normal path builds these from the API listing item via _extract.
+        A queued lc_id has no listing item, so identity (title / creator /
+        short_name / id_name) is derived from the page instead -- exactly what
+        f95.refresh_one does for the same reason.
+
+        Returns (atlas, lc) or (None, None) if the page yielded no usable
+        title, which is the one field matching cannot proceed without.
+        """
+        title = _title_from_page(detail)
+        if not title:
+            return None, None
+        creator = (detail.get("developer") or "").strip()
+        short_name, id_name = _normalise_id_name(title, creator)
+
+        atlas = gameRecord.atlasRecord()
+        atlas["title"] = title
+        atlas["short_name"] = short_name
+        atlas["id_name"] = id_name
+        atlas["creator"] = creator
+        atlas["developer"] = creator
+
+        lc = gameRecord.lcRecord()
+        lc["lc_id"] = lc_id
+        lc["site_url"] = site_url
+        lc["last_record_update"] = int(time.time())
+
+        # Fills overview, tags, version, os, language, images, downloads,
+        # prefix-derived category/engine/status, external ids.
+        self._apply_detail(atlas, lc, detail)
+        return atlas, lc
+
+    def _refresh_unmapped(self, lc_id, db_type):
+        """Handle a queued lc_id that has no atlas mapping yet.
+
+        Mirrors _process_item's matching rules, with one deliberate
+        difference: this path NEVER inserts a brand-new atlas row. run() may
+        do that because it is working from the site's own listing feed and has
+        seen the game in context; a manual refresh request is just an id typed
+        by a human, and silently minting an atlas row from it is not something
+        that should happen without a look. So:
+
+            exactly 1 exact id_name match -> LINK (safe, unambiguous)
+            more than 1 exact match       -> review queue, kind="multi"
+            fuzzy candidates above floor  -> review queue, kind="fuzzy"
+            nothing that looks like it    -> review queue, kind="new"
+
+        "new" is a kind the scraper never produces; the admin queue treats any
+        non-fuzzy kind as an exact-id_name lookup, which correctly yields no
+        candidates, so the reviewer gets the "create as new atlas row" action.
+        """
+        if isLcInReviewQueue(lc_id, db_type):
+            msg = (f"lc {lc_id}: already awaiting a decision in the review "
+                   f"queue; resolve it there.")
+            print("  " + msg)
+            return RefreshOutcome(False, "in_review", msg)
+
+        site_url = self._resolve_site_url(lc_id)
+        if not site_url:
+            msg = (f"lc {lc_id}: could not resolve a thread URL from the id "
+                   f"alone (deleted, gated, or not a valid lc_id).")
+            print("  " + msg)
+            return RefreshOutcome(False, "url_unresolved", msg)
+
+        print("refresh (unmapped):", lc_id, site_url)
+        detail = self._fetch_detail(lc_id, site_url)
+        if not detail:
+            msg = f"lc {lc_id}: detail fetch failed for {site_url}."
+            print("  " + msg)
+            return RefreshOutcome(False, "detail_fetch_failed", msg)
+
+        atlas, lc = self._records_from_detail(lc_id, site_url, detail)
+        if atlas is None:
+            msg = (f"lc {lc_id}: thread page carried no usable title; cannot "
+                   f"match it to anything.")
+            print("  " + msg)
+            return RefreshOutcome(False, "no_title", msg)
+
+        now = int(time.time())
+        exact_ids = findAtlasIdsByIdName(atlas["id_name"], db_type)
+
+        if len(exact_ids) == 1:
+            linked_atlas_id = exact_ids[0]
+            lc["atlas_id"] = linked_atlas_id
+            UpdatetableDynamic("lewdcorner", self._clean(lc), db_type)
+            # Same reason as _process_item's link branch: bump the atlas row so
+            # the title re-exports alongside the new LC row, otherwise the
+            # client shows "LewdCorner #<lc_id>".
+            touchAtlasRecord(linked_atlas_id, db_type, now)
+            msg = (f"lc {lc_id}: linked to existing atlas_id "
+                   f"{linked_atlas_id} ({atlas['title']})")
+            print("  " + msg)
+            return RefreshOutcome(True, "linked", msg)
+
+        if len(exact_ids) > 1:
+            self._enqueue(None, atlas, lc, kind="multi",
+                          candidates=exact_ids, db_type=db_type)
+            msg = (f"lc {lc_id}: {len(exact_ids)} atlas rows share id_name "
+                   f"{atlas['id_name']!r} ({exact_ids}); queued for review.")
+            print("  QUEUED (multi-match) " + msg)
+            return RefreshOutcome(False, "queued_multi", msg)
+
+        fuzzy_ids = findFuzzyAtlasCandidates(
+            atlas["short_name"], atlas["creator"], db_type)
+        if fuzzy_ids:
+            candidate_rows = getAtlasRowsByIds(fuzzy_ids, db_type)
+            best_score, best_id = _best_candidate(
+                atlas["title"], atlas["creator"], candidate_rows)
+            if best_score > LC_REVIEW_FLOOR:
+                self._enqueue(None, atlas, lc, kind="fuzzy",
+                              candidates=fuzzy_ids, db_type=db_type,
+                              score=best_score)
+                msg = (f"lc {lc_id}: best fuzzy match {best_score}% "
+                       f"(atlas_id {best_id}); queued for review.")
+                print("  QUEUED (fuzzy) " + msg)
+                return RefreshOutcome(False, "queued_fuzzy", msg)
+
+        self._enqueue(None, atlas, lc, kind="new", candidates=[],
+                      db_type=db_type)
+        msg = (f"lc {lc_id}: no atlas match for {atlas['title']!r}; queued as "
+               f"a new-game decision.")
+        print("  QUEUED (new) " + msg)
+        return RefreshOutcome(False, "queued_new", msg)
 
     # ---- thread-page detail --------------------------------------------
     # The API listing carries ids, prefixes, counts and THUMBNAILS. Everything

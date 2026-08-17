@@ -48,6 +48,7 @@ import time
 from datetime import datetime, timezone
 
 from scraper.auth import F95Session
+from scraper.agents import RefreshOutcome
 from scraper.agents.f95_detail import parse_thread_detail
 from scraper.datatypes.data import data
 from scraper.datatypes.record import gameRecord
@@ -424,9 +425,10 @@ class f95:
           * refresh_missing_tags.py (tag backfill, requirement 2)
           * f95_refresh_worker.py   (the server refresh queue, requirement 4)
 
-        Returns True on a successful detail fetch + write, False otherwise.
-        Retries the page fetch (like a new game) so a transient blip doesn't
-        wipe a good row down to listing-only fields.
+        Returns a RefreshOutcome (truthy on success), so the queue worker can
+        record WHY a row failed instead of guessing. Retries the page fetch
+        (like a new game) so a transient blip doesn't wipe a good row down to
+        listing-only fields.
         """
         self.session.ensure_authenticated()
         f95_id = str(f95_id)
@@ -441,9 +443,14 @@ class f95:
             f95rec["site_url"], atlas, f95rec, retries=_detail_retries(),
         )
         if not ok:
+            msg = (f"f95 {f95_id}: detail fetch failed after "
+                   f"{_detail_retries() + 1} attempt(s) for "
+                   f"{f95rec['site_url']}; existing row left untouched. A "
+                   f"persistent HTTP 403 here usually means the thread is "
+                   f"gone or gated rather than a session problem.")
             print("  refresh failed (detail fetch); leaving existing row "
                   "untouched:", f95_id)
-            return False
+            return RefreshOutcome(False, "detail_fetch_failed", msg)
 
         # Preserve the accurate feed timestamp if the page label was missing:
         # a manual refresh has no feed `ts`, so we keep whatever the page
@@ -451,7 +458,7 @@ class f95:
         # the existing stored value if the page had none.
         self._update_record(atlas, f95rec, db_type)
         print("  refreshed f95_id", f95_id)
-        return True
+        return RefreshOutcome(True, "refreshed", f"f95 {f95_id}: refreshed")
 
     # ---- detail (authenticated) ---------------------------------------------
     def _fetch_detail(self, site_url, atlas, f95rec, retries=0):
