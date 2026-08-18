@@ -237,7 +237,7 @@ def main():
         add_link(aid, "steam", ext_id="3501", entry_type="dlc",
                  parent_kind="f95_zone", parent_source_id="12345")
         assert_eq(ext_for(aid).get("steam_dlc_parents"),
-                  {"3501": {"kind": "f95_zone", "id": "12345"}}, "source parent")
+                  {"f95_zone": {"12345": ["3501"]}}, "source parent")
 
     def t_dlc_parent_on_another_manual_link():
         """parent_link_id is a local PK, so it must be translated to the
@@ -251,7 +251,7 @@ def main():
                  parent_kind="manual", parent_link_id=parent)
         ext = ext_for(aid)
         assert_eq(ext.get("steam_dlc_parents"),
-                  {"3601": {"kind": "steam", "id": "3600"}}, "resolved parent")
+                  {"steam": {"3600": ["3601"]}}, "resolved parent")
         assert str(parent) not in json.dumps(ext), \
             "a raw link_id must never reach the client"
 
@@ -265,7 +265,7 @@ def main():
         add_link(aid, "steam", ext_id="4101", entry_type="dlc",
                  parent_kind="manual", parent_link_id=parent)
         assert_eq(ext_for(aid).get("steam_dlc_parents"),
-                  {"4101": {"kind": "steam", "id": "4100"}}, "derived parent id")
+                  {"steam": {"4100": ["4101"]}}, "derived parent id")
 
     def t_dlc_parented_across_kinds():
         """Nothing stops an admin parenting a Steam DLC to a GOG link."""
@@ -276,7 +276,7 @@ def main():
         add_link(aid, "steam", ext_id="4200", entry_type="dlc",
                  parent_kind="manual", parent_link_id=parent)
         assert_eq(ext_for(aid).get("steam_dlc_parents"),
-                  {"4200": {"kind": "gog", "id": "base_g"}}, "cross-kind parent")
+                  {"gog": {"base_g": ["4200"]}}, "cross-kind parent")
 
     def t_removed_parent_exports_null():
         """fk_manual_links_parent is ON DELETE SET NULL, so removing a parent
@@ -292,16 +292,20 @@ def main():
              (parent,), commit=True)
         ext = ext_for(aid)
         assert_eq(ext.get("steam_dlc_appids"), ["4301"], "id kept")
-        assert_eq(ext.get("steam_dlc_parents"), {"4301": None}, "parent is null")
+        assert "steam_dlc_parents" not in ext, \
+            "an unparented dlc is absent from the parent map, not a null entry"
 
     def t_itch_dlc_is_typed():
         """itch exports as urls rather than ids, but its type still matters."""
         reset()
         aid = make_game(35)
         add_link(aid, "itch", ext_id="basegame", entry_type="game")
-        add_link(aid, "itch", ext_id="sidestory", entry_type="dlc")
+        add_link(aid, "itch", ext_id="sidestory", entry_type="dlc",
+                 parent_kind="manual", parent_link_id=link_id_of(aid, "basegame"))
         ext = ext_for(aid)
         assert_eq(ext.get("itch_dlc"), ["https://sidestory.itch.io"], "itch dlc")
+        assert_eq(ext.get("itch_dlc_parents"),
+                  {"itch": {"basegame": ["https://sidestory.itch.io"]}}, "itch parent")
         assert_eq(len(ext.get("itch") or []), 2, "both still in the main list")
 
     def t_unparented_dlc_keeps_its_id():
@@ -312,7 +316,7 @@ def main():
         add_link(aid, "steam", ext_id="3701", entry_type="dlc")
         ext = ext_for(aid)
         assert_eq(ext.get("steam_dlc_appids"), ["3701"], "id kept")
-        assert_eq(ext.get("steam_dlc_parents"), {"3701": None}, "explicitly null")
+        assert "steam_dlc_parents" not in ext, "absent from the parent map"
 
     def t_gog_dlc_is_typed_too():
         reset()
@@ -348,6 +352,31 @@ def main():
         ext = ext_for(aid, start_time=5000)
         assert ext is not None, "row with links should be unioned into the delta"
         assert_eq(ext.get("steam_dlc_appids"), ["4000"], "typed in a delta too")
+
+    def t_several_dlc_group_under_one_parent():
+        """The reason the map is parent-keyed: one entry per base game."""
+        reset()
+        aid = make_game(36)
+        add_link(aid, "steam", ext_id="5000", entry_type="game")
+        parent = link_id_of(aid, "5000")
+        for dlc in ("5001", "5002", "5003"):
+            add_link(aid, "steam", ext_id=dlc, entry_type="dlc",
+                     parent_kind="manual", parent_link_id=parent)
+        assert_eq(ext_for(aid).get("steam_dlc_parents"),
+                  {"steam": {"5000": ["5001", "5002", "5003"]}}, "one parent entry")
+
+    def t_parented_and_unparented_dlc_coexist():
+        reset()
+        aid = make_game(37)
+        add_link(aid, "steam", ext_id="5100", entry_type="game")
+        parent = link_id_of(aid, "5100")
+        add_link(aid, "steam", ext_id="5101", entry_type="dlc",
+                 parent_kind="manual", parent_link_id=parent)
+        add_link(aid, "steam", ext_id="5102", entry_type="dlc")
+        ext = ext_for(aid)
+        assert_eq(ext.get("steam_dlc_appids"), ["5101", "5102"], "both typed")
+        assert_eq(ext.get("steam_dlc_parents"),
+                  {"steam": {"5100": ["5101"]}}, "only the parented one is mapped")
 
     # -------------------------------------------------------- export scope
     def t_full_export_includes_untouched_rows():
@@ -453,6 +482,9 @@ def main():
         ("a dlc parented across kinds is exported", t_dlc_parented_across_kinds),
         ("a removed parent exports null", t_removed_parent_exports_null),
         ("itch dlc is typed", t_itch_dlc_is_typed),
+        ("several dlc group under one parent", t_several_dlc_group_under_one_parent),
+        ("parented and unparented dlc coexist",
+         t_parented_and_unparented_dlc_coexist),
         ("an unparented dlc keeps its id", t_unparented_dlc_keeps_its_id),
         ("gog dlc is typed too", t_gog_dlc_is_typed_too),
         ("a scraped id is never treated as a dlc",

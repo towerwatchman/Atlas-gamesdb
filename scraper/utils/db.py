@@ -1086,10 +1086,19 @@ _STORE_DLC_OUTPUT = {
 def _url_kind_dlc_key(kind):
     return f"{kind}_dlc"
 
-# Parent linkage, exported as one entry per DLC id so the client can show an
-# add-on under the thing it belongs to. `parent` is null for an unparented
-# DLC -- the admin UI allows that state ("unparented"), so the export has to
-# represent it rather than drop the id.
+# Parent linkage, grouped BY PARENT so a base game with several add-ons is one
+# entry rather than one per DLC:
+#
+#     "steam_dlc_parents": {"steam": {"1000": ["2001", "2002", "2003"]}}
+#
+# Nested under the PARENT's kind because a DLC may be parented across kinds -- 
+# manualLinks.js validates that a parent exists, sits on the same atlas row
+# and is not itself a DLC, but never that it is the same kind, so a Steam DLC
+# tied to a GOG base game is legal. Flat id keys would silently collide.
+#
+# An unparented DLC is simply absent from this map. Its id is still listed in
+# the _dlc_ key, so "typed as DLC" and "has a known parent" stay separable --
+# the admin UI allows the unparented state and shows it as such.
 _STORE_DLC_PARENT_OUTPUT = {
     "steam": "steam_dlc_parents",
     "gog": "gog_dlc_parents",
@@ -1200,6 +1209,28 @@ def _manual_link_parent(link, resolved_by_link_id):
     if not source_id:
         return None
     return {"kind": kind, "id": source_id}
+
+
+def _group_by_parent(entries, field):
+    """{parent_kind: {parent_id: [child ...]}} for the DLC entries in a kind.
+
+    Grouped by parent rather than by child so a base game with several add-ons
+    is one entry, which is also the shape the client renders from ("these DLC
+    belong to this game"). Nested under the parent's kind because cross-kind
+    parenting is permitted and flat id keys could collide.
+
+    Unparented DLC are omitted; they remain listed in the _dlc_ key.
+    """
+    out = {}
+    for entry in entries:
+        value = entry.get(field)
+        parent = entry.get("parent")
+        if not entry.get("is_dlc") or not value or not parent:
+            continue
+        bucket = out.setdefault(parent["kind"], {}).setdefault(parent["id"], [])
+        if value not in bucket:
+            bucket.append(value)
+    return out
 
 
 def _merge_manual_links_into_external_ids(atlas_rows):
@@ -1345,13 +1376,11 @@ def _merge_manual_links_into_external_ids(atlas_rows):
                     dlc_key = _STORE_DLC_OUTPUT.get(kind)
                     if dlc_ids and dlc_key:
                         ext[dlc_key] = dlc_ids
-                        parents = {
-                            e["id"]: e["parent"]
-                            for e in entries if e["id"] and e["is_dlc"]
-                        }
                         parent_key = _STORE_DLC_PARENT_OUTPUT.get(kind)
                         if parent_key:
-                            ext[parent_key] = {i: parents.get(i) for i in dlc_ids}
+                            by_parent = _group_by_parent(entries, "id")
+                            if by_parent:
+                                ext[parent_key] = by_parent
                 # A store link with no resolvable id (an unusual url shape) is
                 # still worth shipping as a url rather than being discarded.
                 urls_only = [e["url"] for e in entries if e["url"] and not e["id"]]
@@ -1375,12 +1404,9 @@ def _merge_manual_links_into_external_ids(atlas_rows):
                 key=_norm_url)
             if dlc_urls:
                 ext[_url_kind_dlc_key(kind)] = dlc_urls
-                parents = {
-                    e["url"]: e["parent"]
-                    for e in entries if e["url"] and e["is_dlc"]
-                }
-                ext[f"{kind}_dlc_parents"] = {
-                    u: parents.get(u) for u in dlc_urls}
+                by_parent = _group_by_parent(entries, "url")
+                if by_parent:
+                    ext[f"{kind}_dlc_parents"] = by_parent
 
         row["external_ids"] = json.dumps(ext, ensure_ascii=False)
 
